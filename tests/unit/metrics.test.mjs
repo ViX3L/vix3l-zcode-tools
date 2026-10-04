@@ -334,3 +334,104 @@ test("formatLine and formatSnapshot render a rate and a TTFT", () => {
   assert.match(summary, /TTFT/);
   dbh.close();
 });
+
+// ---------------------------------------------------------------------------
+// Subagent activity — the separate surface.
+//
+// The fixture's r_sub row is a subagent request the tests above prove is
+// EXCLUDED from the session figures. These tests prove the new surface picks it
+// up — and only it — while leaving every number above untouched. `sinceTs` is
+// the key knob: the surface is time-windowed because the schema cannot link a
+// subagent row to the turn that spawned it (turn_id never matches, and
+// parent_user_message_id does not join).
+// ---------------------------------------------------------------------------
+
+test("subagentActivity reports the subagent requests the session figures exclude", () => {
+  const dbh = open();
+  const sa = M.subagentActivity(dbh, 0);
+  assert.equal(sa.requests, 1, "only the subagent row belongs to this surface");
+  assert.equal(sa.sessions, 1);
+  assert.equal(sa.agents.length, 1);
+  assert.equal(sa.agents[0].agent, "subagent");
+  assert.equal(sa.agents[0].requests, 1);
+  // r_sub: 9999 output + 0 reasoning = 9999 tok. Its generation window is
+  // completed_at - first_token_at = 1_305_000 - 1_300_200 = 4_800 ms (the
+  // fixture's firstTokenAt defaults to startedAt + ttftMs), so 9999/4.8 =
+  // 2083.1 tok/s — not the 1999.8 a naive 5000 ms divisor would give.
+  assert.equal(sa.agents[0].avgTps, 2083.1);
+  assert.equal(sa.outputTokens, 9999);
+  // Not running, and last completion is far in the past (fixture epoch ~1.3e6),
+  // so the surface is not active.
+  assert.equal(sa.running, 0);
+  assert.equal(sa.active, false);
+  dbh.close();
+});
+
+test("the subagent surface stays separate from the session aggregate", () => {
+  const dbh = open();
+  const snap = M.sessionSnapshot(dbh, SID, { window: 10 });
+  // The session average is r1+r2+r3 only: (233.3+300+200)/3 = 244.4, with the
+  // subagent's 2083.1 EXCLUDED. If subagent rows ever leaked into the session
+  // scope this would jump, so it is the guard that the two surfaces stay apart.
+  assert.equal(snap.session.avgTps, 244.4);
+  assert.equal(snap.session.samples, 3);
+  // The subagent surface sees exactly the row the session dropped.
+  const sa = M.subagentActivity(dbh, 0);
+  assert.equal(sa.requests, 1);
+  assert.equal(sa.avgTps, 2083.1);
+  dbh.close();
+});
+
+test("subagentActivity honours its time window", () => {
+  const dbh = open();
+  // The fixture row completes at ~1_305_000 (epoch ms — this is a 1970 date, on
+  // purpose). A window starting after it finds nothing; one before it finds it.
+  assert.equal(M.subagentActivity(dbh, 2_000_000).requests, 0, "a later window excludes the row");
+  assert.equal(M.subagentActivity(dbh, 1_000_000).requests, 1, "an earlier window includes it");
+  dbh.close();
+});
+
+test("a running subagent reads as active and names its agent", () => {
+  // Its own machine: a RUNNING subagent cannot come from the completed scan, and
+  // isolating it keeps the shared fixture's assertions above undisturbed.
+  const m2 = makeMachine("subagent-running");
+  const db2 = createDb(m2);
+  addSession(db2, "sess_sa", "Subagent running");
+  addRunningRequest(db2, { sessionId: "sess_sa", id: "run_sub", querySource: "subagent", agent: "zcode-Explore" });
+  db2.close();
+  const dbh = openAt(m2.dbPath);
+  const sa = M.subagentActivity(dbh, Date.now() - 60_000);
+  assert.equal(sa.running, 1, "the running subagent is counted");
+  assert.equal(sa.active, true, "a running subagent makes the surface active");
+  assert.deepEqual(sa.runningAgents, ["zcode-Explore"]);
+  dbh.close();
+  cleanup({ ...m2, db: null });
+});
+
+test("subagentActivity groups by agent and ranks them by volume", () => {
+  const m3 = makeMachine("subagent-agents");
+  const db3 = createDb(m3);
+  addSession(db3, "sess_g", "Grouped");
+  const now = Date.now();
+  // Two requests for zcode-Explore, one for zcode-general-purpose.
+  addRequest(db3, { sessionId: "sess_g", id: "g1", querySource: "subagent", agent: "zcode-Explore",
+    outputTokens: 500, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 2000, startedAt: now - 3000 });
+  addRequest(db3, { sessionId: "sess_g", id: "g2", querySource: "subagent", agent: "zcode-Explore",
+    outputTokens: 300, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 1000, startedAt: now - 2000 });
+  addRequest(db3, { sessionId: "sess_g", id: "g3", querySource: "subagent", agent: "zcode-general-purpose",
+    outputTokens: 100, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 500, startedAt: now - 1500 });
+  db3.close();
+  const dbh = openAt(m3.dbPath);
+  const sa = M.subagentActivity(dbh, now - 60_000);
+  assert.equal(sa.requests, 3, "all three subagent rows are inside the window");
+  assert.equal(sa.agents.length, 2, "two distinct agents");
+  // Ranked by request count: Explore (2) before general-purpose (1).
+  assert.equal(sa.agents[0].agent, "zcode-Explore");
+  assert.equal(sa.agents[0].requests, 2);
+  assert.equal(sa.agents[1].agent, "zcode-general-purpose");
+  assert.equal(sa.agents[1].requests, 1);
+  // A completion landed within the last minute, so the surface is active.
+  assert.equal(sa.active, true);
+  dbh.close();
+  cleanup({ ...m3, db: null });
+});

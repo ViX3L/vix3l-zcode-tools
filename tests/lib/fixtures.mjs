@@ -110,6 +110,8 @@ export function addSession(db, id, title = "Test session") {
 
 // A completed main_turn request. Every field that the row projection reads can
 // be overridden, so a test can express exactly the shape it wants to prove.
+// `agent` is only set on subagent rows (querySource='subagent'), where it names
+// the spawning agent; it stays NULL for main_turn rows, as on the live DB.
 let seq = 0;
 export function addRequest(db, r) {
   const id = r.id || `req_${++seq}`;
@@ -121,14 +123,15 @@ export function addRequest(db, r) {
     "INSERT INTO model_usage (" +
       "id, logical_request_id, session_id, turn_id, query_source, provider_id, model_id, status," +
       " started_at, first_token_at, completed_at, duration_ms, time_to_first_token_ms," +
-      " input_tokens, output_tokens, reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens" +
-    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+      " input_tokens, output_tokens, reasoning_tokens, cache_read_input_tokens, cache_creation_input_tokens," +
+      " agent" +
+    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).run(
     id, id, r.sessionId, r.turnId ?? "turn_1", r.querySource ?? "main_turn",
     r.providerId ?? "prov_1", r.modelId ?? "deepseek-v4.1-flash:cloud", r.status ?? "completed",
     startedAt, firstTokenAt, completedAt, r.durationMs ?? (completedAt - startedAt),
     r.ttftMs ?? 200, r.inputTokens ?? 10_000, r.outputTokens ?? 600, r.reasoningTokens ?? 0,
-    r.cacheRead ?? 4_000, r.cacheWrite ?? 0
+    r.cacheRead ?? 4_000, r.cacheWrite ?? 0, r.agent ?? null
   );
   return id;
 }
@@ -141,11 +144,11 @@ export function addRunningRequest(db, r) {
   db.prepare(
     "INSERT INTO model_usage (" +
       "id, logical_request_id, session_id, turn_id, query_source, provider_id, model_id, status," +
-      " started_at, input_tokens, output_tokens, reasoning_tokens" +
-    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+      " started_at, input_tokens, output_tokens, reasoning_tokens, agent" +
+    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
   ).run(id, id, r.sessionId, r.turnId ?? "turn_live", r.querySource ?? "main_turn",
     r.providerId ?? "prov_1", r.modelId ?? "deepseek-v4.1-flash:cloud", "running",
-    startedAt, 0, 0, 0);
+    startedAt, 0, 0, 0, r.agent ?? null);
   return id;
 }
 

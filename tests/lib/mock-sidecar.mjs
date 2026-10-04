@@ -40,7 +40,35 @@ export function sampleSnapshot(over = {}) {
     session,
     turns: over.turns === undefined ? { turns: 2, steps: 5, toolCalls: 7, toolErrors: 1, totalTokens: 20000 } : over.turns,
     live: over.live,
+    // Subagent activity is a SEPARATE surface. Absent here by default, matching
+    // a machine that has not spawned any — the card must then hide its whole
+    // subagent block. A test that wants it passes `subagents`.
+    subagents: over.subagents,
     ...(over.top || {}),
+  };
+}
+
+// A subagent-activity block shaped like metrics.subagentActivity's return.
+export function sampleSubagents(over = {}) {
+  return {
+    sinceTs: Date.now() - 15 * 60 * 1000,
+    active: true,
+    running: 0,
+    runningAgents: [],
+    requests: 12,
+    sessions: 2,
+    avgTps: 88.4,
+    peakTps: 210.5,
+    avgTtftMs: 1450,
+    outputTokens: 9000,
+    lastAt: Date.now() - 30_000,
+    agents: [
+      { agent: "zcode-Explore", requests: 10, sessions: 1, avgTps: 80.1, peakTps: 210.5,
+        avgTtftMs: 1500, outputTokens: 8000, lastAt: Date.now() - 30_000 },
+      { agent: "zcode-general-purpose", requests: 2, sessions: 1, avgTps: 130.2, peakTps: 150,
+        avgTtftMs: 1200, outputTokens: 1000, lastAt: Date.now() - 60_000 },
+    ],
+    ...over,
   };
 }
 

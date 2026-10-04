@@ -210,6 +210,15 @@ function refreshSnapshot(force) {
     try {
       snap.turns = metrics.turnTotals(db, snap.sessionId);
     } catch { /* older DB without turn_usage: leave it absent */ }
+    // Subagent activity — a SEPARATE surface, never merged into the session
+    // figures above. Subagent requests live in their own sessions and cannot be
+    // linked to a parent turn (see metrics.subagentActivity for the evidence),
+    // so this reports the last 15 minutes machine-wide. It rides the same
+    // DB-change gate as everything else here, so it adds no hot-path query on a
+    // tick where nothing landed.
+    try {
+      snap.subagents = metrics.subagentActivity(db);
+    } catch { /* leave absent on an older DB */ }
     snap.plugin = { name: "stats-composer", version: VERSION };
     SNAP = snap;
     SNAP_ERR = null;

@@ -170,6 +170,9 @@ function toRow(r) {
         : null,
     startedAt: r.started_at,
     completedAt: r.completed_at,
+    // The spawning agent (e.g. "zcode-Explore"). Present on subagent rows and
+    // empty/absent elsewhere; used only to group the subagent activity surface.
+    agent: r.agent ?? null,
   };
 }
 
@@ -964,5 +967,114 @@ export function liveRate(db, sid) {
     startedAt: running.startedAt,
     waitingMs: running.startedAt ? Date.now() - running.startedAt : null,
     estTps: last && last.tokPerSec != null ? last.tokPerSec : null,
+  };
+}
+
+// Subagent activity — requests made by spawned subagents.
+//
+// WHY THIS IS TIME-WINDOWED, NOT PER-TURN
+//
+// A subagent's model requests are written to their OWN session
+// (`sess_subagent_agent_<uuid>`), never the parent conversation's, and nothing
+// links a subagent row back to the turn that spawned it. Verified against the
+// live DB: `turn_id` on a subagent row never equals a parent main_turn turn_id
+// (0 of 26k), `parent_user_message_id` does not join to
+// `turn_usage.user_message_id`, and `trace_id` is far too coarse to use — one
+// trace spans 174 turns across 113 sessions. So an honest "this turn's
+// subagents" attribution does not exist in the schema; claiming one would be a
+// fabrication. What IS available is "subagents that ran in this time window",
+// which is what this returns — and which is exactly the question the pill could
+// not answer at all before.
+//
+// It deliberately NEVER merges into the session figures: the session aggregate
+// stays main_turn-only, so folding subagent traffic in cannot distort the
+// composer's own numbers. This is a separate surface, reported separately.
+export const SUBAGENT_WINDOW_MS = 15 * 60 * 1000;
+
+// Bounded: one window, at most this many rows projected. A subagent burst is
+// small (tens of rows), so this only guards against a pathological window.
+const SUBAGENT_LIMIT = 500;
+
+const SUBAGENT_COLS =
+  "SELECT id, session_id, turn_id, provider_id, model_id, status, started_at," +
+  " first_token_at, completed_at, time_to_first_token_ms, duration_ms," +
+  " output_tokens, reasoning_tokens, input_tokens, cache_read_input_tokens," +
+  " cache_creation_input_tokens, query_source, finish_reason, error_type, agent" +
+  " FROM model_usage";
+
+export function subagentActivity(db, sinceTs) {
+  const since = Number.isFinite(sinceTs) ? sinceTs : Date.now() - SUBAGENT_WINDOW_MS;
+  let rows = [];
+  let runningRows = [];
+  try {
+    rows = db
+      .prepare(
+        SUBAGENT_COLS + " WHERE query_source = 'subagent' AND completed_at >= ?" +
+          " ORDER BY completed_at DESC LIMIT " + SUBAGENT_LIMIT
+      )
+      .all(since)
+      .map(toRow);
+    // Live subagents are a different status, so they cannot come from the
+    // completed scan above. Machine-wide by necessity: a running subagent has
+    // no completed row to anchor it to a session yet.
+    runningRows = db
+      .prepare(SUBAGENT_COLS + " WHERE query_source = 'subagent' AND status = 'running'" +
+        " ORDER BY started_at DESC LIMIT 20")
+      .all()
+      .map(toRow);
+  } catch {
+    // An older DB (or one without these rows) must not throw into the
+    // snapshot path; report "no subagent activity" instead.
+    return { sinceTs: since, active: false, running: 0, runningAgents: [], requests: 0, sessions: 0, agents: [] };
+  }
+  const rated = rows.filter((r) => r.tokPerSec != null);
+  const ttfts = rated.map((r) => r.ttftMs).filter((t) => t != null);
+  const mean = (a) =>
+    a.length ? Math.round((a.reduce((s, v) => s + v, 0) / a.length) * 10) / 10 : null;
+  const sessions = new Set(rows.map((r) => r.sessionId));
+
+  // Per-agent breakdown, so the card can say WHICH subagent is doing the work
+  // (the `agent` column holds the spawning agent, e.g. "zcode-Explore").
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.agent || "subagent";
+    let g = groups.get(key);
+    if (!g) { g = { agent: key, rows: [], sessions: new Set() }; groups.set(key, g); }
+    g.rows.push(r);
+    g.sessions.add(r.sessionId);
+  }
+  const agents = [...groups.values()]
+    .map((g) => {
+      const a = aggregate(g.rows);
+      return {
+        agent: g.agent,
+        requests: g.rows.length,
+        sessions: g.sessions.size,
+        avgTps: a.avgTps,
+        peakTps: a.peakTps,
+        avgTtftMs: a.avgTtftMs,
+        outputTokens: a.outputTokens + a.reasoningTokens,
+        lastAt: g.rows[0] ? g.rows[0].completedAt : null,
+      };
+    })
+    .sort((x, y) => y.requests - x.requests || String(x.agent).localeCompare(String(y.agent)));
+
+  const newest = rows[0] || null;
+  // "Active" means a subagent is working now, or one finished in the last
+  // minute — recent enough that the user still considers it happening.
+  const active = runningRows.length > 0 || (newest != null && Date.now() - newest.completedAt < 60_000);
+  return {
+    sinceTs: since,
+    active,
+    running: runningRows.length,
+    runningAgents: runningRows.map((r) => r.agent || "subagent"),
+    requests: rows.length,
+    sessions: sessions.size,
+    avgTps: mean(rated.map((r) => r.tokPerSec)),
+    peakTps: rated.length ? Math.max(...rated.map((r) => r.tokPerSec)) : null,
+    avgTtftMs: mean(ttfts),
+    outputTokens: rows.reduce((s, r) => s + r.outputTokens + r.reasoningTokens, 0),
+    lastAt: newest ? newest.completedAt : null,
+    agents,
   };
 }

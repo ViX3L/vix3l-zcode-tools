@@ -156,7 +156,7 @@ const PILL_JS_TEMPLATE = `
   // instead of the idempotence check answering 'already' and leaving the old
   // layout on screen until a reload.
   var LAYOUT = '__CARD_LAYOUT__';
-  var VERSION = '38-' + LAYOUT;
+  var VERSION = '39-' + LAYOUT;
   var EPOCH = Math.random().toString(36).slice(2, 10);
   // Document singleton: exactly one poller and one generation identity exist
   // per page, so a re-injection REPLACES the running generation instead of
@@ -259,7 +259,22 @@ const PILL_JS_TEMPLATE = `
       '<div class="cr g3"><span class="cd"></span><span class="cl">Cached input</span><span class="cv v-cached">—</span></div>' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Output</span><span class="cv v-output">—</span></div>' +
     '</div>' +
-    '<div class="cfoot"><span class="cl">Average session rate</span><span class="cv c-avg">—</span></div>';
+    '<div class="cfoot"><span class="cl">Average session rate</span><span class="cv c-avg">—</span></div>' +
+    // Subagent activity — a SEPARATE block, last in the card and behind its own
+    // divider, because it is NOT part of the session figures above. Subagent
+    // requests live in their own sessions and cannot be linked to a parent turn,
+    // so this is a machine-wide time window ("subagents that ran in the last
+    // 15 minutes"), never folded into the averages. Hidden entirely when there
+    // is no such activity, so the card is unchanged for users who never spawn
+    // subagents.
+    '<div class="csub" style="display:none">' +
+      '<div class="cdiv"></div>' +
+      '<div class="crows">' +
+        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagents · last 15 min</span><span class="cv v-subcount">—</span></div>' +
+        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagent rate</span><span class="cv v-subtps">—</span></div>' +
+        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagent TTFT</span><span class="cv v-subttft">—</span></div>' +
+      '</div>' +
+    '</div>';
 
   function findToolbar() {
     return document.querySelector('[data-composer-leading-content], [data-composer-leading-actions]');
@@ -430,6 +445,9 @@ const PILL_JS_TEMPLATE = `
       '.cardp .cr.g2 .cd { opacity: .78; }',
       '.cardp .cr.g3 .cd { opacity: .68; }',
       '.cardp .cr.g4 .cd { opacity: .55; }',
+      // g5 is the subagent block: below g4 so it never competes with the
+      // session's own figures, while still reading as part of the same card.
+      '.cardp .cr.g5 .cd { opacity: .45; }',
       // The label keeps its CONTENT width and never wraps ("Tool time" must stay
       // on one line even in the narrower two-column block); the value takes the
       // remaining space and is pushed to the right edge. A label with flex-basis
@@ -752,6 +770,27 @@ const PILL_JS_TEMPLATE = `
     setText(v('.v-turns'), tt && tt.turns != null ? String(tt.turns) : '—');
     setText(v('.v-steps'), tt && tt.steps != null ? String(tt.steps) : '—');
     setText(v('.v-toolcalls'), tt && tt.toolCalls != null ? String(tt.toolCalls) : '—');
+    // Subagent activity — a machine-wide time window, deliberately kept apart
+    // from every session figure. Filled BEFORE the "no session" guard below
+    // because it does not depend on the session at all: a subagent can be running while the
+    // composer shows a fresh draft chat with no requests of its own. Shown only
+    // when subagents actually ran, so the card is byte-identical for the
+    // majority of users who never spawn any.
+    const sa = snap.subagents;
+    const sub = c.querySelector('.csub');
+    if (sub) {
+      const has = !!(sa && (sa.requests > 0 || sa.running > 0));
+      sub.style.display = has ? '' : 'none';
+      if (has) {
+        const kinds = (sa.agents || []).map((a) => a.agent).filter(Boolean);
+        const who = sa.running > 0
+          ? 'running now'
+          : (kinds.length === 1 ? kinds[0] : (kinds.length > 1 ? kinds.length + ' agents' : 'subagent'));
+        setText(v('.v-subcount'), (sa.requests || 0) + ' req' + (sa.requests === 1 ? '' : 's') + ' · ' + who);
+        setText(v('.v-subtps'), sa.avgTps != null ? sa.avgTps + ' tok/s' : '—');
+        setText(v('.v-subttft'), sa.avgTtftMs != null ? fmtMs(sa.avgTtftMs) : '—');
+      }
+    }
     if (!ss) return;
     // Latest single request — identical to the pill's own figures.
     const lastTps = state.tps != null ? state.tps : (snap.last && snap.last.tokPerSec);

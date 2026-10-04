@@ -1,6 +1,6 @@
 {
   "name": "stats-composer",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "Per-request TPS (tok/s) and TTFT (first-token latency) stats for ZCode, shown at the position you marked: inline in the composer toolbar, next to the + button. Reads the usage DB that ZCode itself already records for every provider, so custom endpoints and all API kinds work identically. Includes a zero-context-pollution sidecar (live stats + optional composer pill injection) as an opt-in integration mode, a /stats-composer:tps command, MCP tools, and a lightweight dashboard.",
   "author": {
     "name": "ViX3L"

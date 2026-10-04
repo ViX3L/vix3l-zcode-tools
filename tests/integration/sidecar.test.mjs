@@ -38,6 +38,18 @@ before(async () => {
     totalTokens: 25_500, durationMs: 10_000, steps: 4, toolCalls: 2 });
   addTool(db, { sessionId: SID, turnId: "turn_a", durationMs: 2_000 });
   addRunningRequest(db, { sessionId: SID, id: "s_live", turnId: "turn_live", startedAt: Date.now() - 900 });
+  // Subagent activity for the separate surface: a subagent request in its OWN
+  // session (as ZCode writes them), completed just now so /stats reports the
+  // surface as active. It must appear under `subagents` and must NOT move any
+  // session figure asserted below.
+  addSession(db, "sess_subagent_agent_test", "Subagent");
+  addRequest(db, {
+    sessionId: "sess_subagent_agent_test", id: "s_sub_1", turnId: "turn_sub",
+    querySource: "subagent", agent: "zcode-Explore",
+    genMs: 2000, ttftMs: 300, outputTokens: 1000, reasoningTokens: 0,
+    inputTokens: 5000, cacheRead: 0,
+    startedAt: Date.now() - 2400, completedAt: Date.now() - 100,
+  });
   db.close();
   // The hook-recorded session is how the sidecar resolves a default session.
   // metrics.stateFile() defaults to <HOME>/.zcode/tps-monitor.last-session.json,
@@ -86,6 +98,22 @@ test("/stats returns the pill's snapshot without the dashboard table", async () 
   // carry the session's whole history.
   assert.equal(s.recent, undefined);
   assert.equal(s.lastTurn, undefined);
+});
+
+test("/stats exposes subagent activity as its own block, separate from the session", async () => {
+  const s = (await sidecar.get("/stats")).json;
+  // The subagent surface is present and sees the subagent row...
+  assert.ok(s.subagents, "the subagent block must be present");
+  assert.equal(s.subagents.requests, 1);
+  assert.equal(s.subagents.agents.length, 1);
+  assert.equal(s.subagents.agents[0].agent, "zcode-Explore");
+  // ...completed 100 ms ago, so the surface reads as active.
+  assert.equal(s.subagents.active, true);
+  // The session's OWN figures must not have absorbed it. Two independent guards
+  // keep it out — the subagent row lives in its own session, and the session
+  // scope is main_turn-only — so this pins that neither ever regresses to
+  // folding subagent traffic into the composer's numbers.
+  assert.equal(s.session.samples, 25, "the subagent row must stay out of the session aggregate");
 });
 
 test("/stats.json is an alias", async () => {
