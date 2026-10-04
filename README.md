@@ -6,7 +6,7 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 
 | Plugin | What it shows | Version |
 |---|---|---|
-| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.13 |
+| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.14 |
 | **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.1 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
@@ -45,8 +45,8 @@ Working from a clone instead? Point **Add Plugin Marketplace** at the repository
 | Command | Does |
 |---|---|
 | `/stats-composer:tps` | Latest request, windowed average, session average |
-| `/stats-composer:dashboard` | Opens the live dashboard (also at `http://127.0.0.1:7427/dashboard`) — sortable per-request table with an auto-refresh toggle |
-| `/stats-composer:doctor` | Health check: Node, DB schema, sidecar, CDP |
+| `/stats-composer:dashboard` | Opens the live dashboard (also at `http://127.0.0.1:7427/dashboard`) — model-mix donut, dark/light switch, and a sortable per-request table with an auto-refresh toggle |
+| `/stats-composer:doctor` | Health check: Node, DB schema, sidecar, MCP handshake, CDP |
 | `/usage-context:usage` | Prints the current session's per-turn figures |
 
 The inline composer pill appears when ZCode exposes a local debugging port — launch once with `zcode --remote-debugging-port=9229`, or use the launcher under `plugins/stats-composer/launcher/`. Without it, the plugins degrade gracefully to the dashboard, the CLI, and an appended stats line; every channel is documented in the plugin skill.

@@ -1,6 +1,16 @@
 #!/usr/bin/env node
-// stats-composer MCP server — stdio JSON-RPC (Content-Length framing).
+// stats-composer MCP server — stdio JSON-RPC, newline-delimited framing.
 // Tools expose the same per-request TPS / TTFT data as the sidecar.
+//
+// Framing: ZCode's stdio MCP client reads one JSON object per line (it splits
+// the stream on "\n", strips a trailing "\r", and JSON.parses each line,
+// skipping SyntaxErrors). It does NOT speak LSP-style Content-Length framing:
+// an earlier version of this server wrote Content-Length headers, so every
+// reply arrived glued to its header, parsed as a SyntaxError, and the client
+// timed out waiting for `initialize` — the plugin's MCP entry showed red with
+// "connection timed out after 30000ms" while the process itself was healthy.
+// Write one compact JSON object per line. Reads stay permissive (both
+// framings are accepted) so manual Content-Length smoke tests still work.
 //
 // Smoke test:
 //   printf '%s\n' \
@@ -51,8 +61,9 @@ const TOOLS = [
 ];
 
 function writeMessage(message) {
-  const body = JSON.stringify(message);
-  process.stdout.write(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`);
+  // One line per message — see the framing note in the header. A single
+  // process.stdout.write of the whole line keeps messages from interleaving.
+  process.stdout.write(JSON.stringify(message) + "\n");
 }
 
 const ok = (id, result) => writeMessage({ jsonrpc: "2.0", id, result });

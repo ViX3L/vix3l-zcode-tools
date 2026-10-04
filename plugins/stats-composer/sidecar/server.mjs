@@ -56,23 +56,75 @@ let FULL_EXTRAS = null;
 let FULL_EXTRAS_AT = 0;
 let FULL_EXTRAS_DBV = null;
 let EXTRAS_DEMAND = 0;
+// The whole session's request rows, cached separately from the derived extras
+// because they are only needed by the table: the dashboard asks for one page at
+// a time through /requests, and that page is sliced from this list. A long
+// session makes this list long, so it is rebuilt only when the session's rows
+// actually change (its own db-version stamp), not on every extras tick.
+let ALL_REQUESTS = null;
+let ALL_REQUESTS_SID = null;
+let ALL_REQUESTS_DBV = null;
 function refreshFullExtras(db, snap, dbv) {
   if (!db || !snap || snap.error) return;
   try {
     const sid = snap.sessionId;
-    // 500 rows: the dashboard pages at 10/page, so this gives up to 50 pages of
-    // history without pulling a whole multi-thousand-row session into memory on
-    // every extras refresh. The per-page window is what the table shows; this
-    // is the browse depth behind it.
-    const extras = { recent: metrics.recentRequests(db, sid, 500).reverse() };
     const lastTurn = metrics.lastTurnStats(db, sid);
-    if (lastTurn) extras.lastTurn = lastTurn;
+    const extras = lastTurn ? { lastTurn } : {};
     FULL_EXTRAS = extras;
     FULL_EXTRAS_AT = Date.now();
     FULL_EXTRAS_DBV = dbv;
   } catch {
     /* keep last good extras */
   }
+}
+// All request rows for a session, newest first, rebuilt only when the session's
+// completed rows have moved. Returns [] until a session is known.
+function allRequests() {
+  const sid = (SNAP && SNAP.sessionId) || null;
+  const dbv = dbVersion();
+  if (!sid) return [];
+  if (ALL_REQUESTS && ALL_REQUESTS_SID === sid && ALL_REQUESTS_DBV === dbv) return ALL_REQUESTS;
+  let db = null;
+  try {
+    db = metrics.openDb();
+    ALL_REQUESTS = metrics.sessionRequests(db, sid);
+    ALL_REQUESTS_SID = sid;
+    ALL_REQUESTS_DBV = dbv;
+  } catch {
+    /* keep the previous list rather than blanking the table */
+  } finally {
+    try { db && db.close(); } catch {}
+  }
+  return ALL_REQUESTS || [];
+}
+
+// One page of the per-request table: sorted server-side over the FULL session,
+// then sliced, so "page 7 of 240" is real history rather than a window inside
+// the first 500 rows. Sorting here (not in the browser) is what lets the table
+// be unbounded without shipping every row on every poll.
+const REQ_SORTS = {
+  completedAt: (r) => r.completedAt ?? -Infinity,
+  model: (r) => r.model ?? "",
+  tokPerSec: (r) => r.tokPerSec ?? -Infinity,
+  ttftMs: (r) => r.ttftMs ?? -Infinity,
+  out: (r) => (r.outputTokens || 0) + (r.reasoningTokens || 0),
+  cacheRead: (r) => r.cacheRead ?? -Infinity,
+  status: (r) => r.status ?? "",
+};
+function requestsPage(offset, limit, sortKey, desc) {
+  const rows = allRequests();
+  const key = REQ_SORTS[sortKey] ? sortKey : "completedAt";
+  const pick = REQ_SORTS[key];
+  const dir = desc ? -1 : 1;
+  const sorted = rows.slice().sort((a, b) => {
+    const av = pick(a), bv = pick(b);
+    const cmp = typeof av === "string" ? String(av).localeCompare(String(bv)) : av - bv;
+    return cmp * dir;
+  });
+  const off = Math.max(0, Math.min(offset | 0, Math.max(0, sorted.length - 1)));
+  const lim = Math.max(1, Math.min(limit | 0 || 10, 500));
+  const pageRows = sorted.slice(off, off + lim).map((x) => ({ ...x, out: (x.outputTokens || 0) + (x.reasoningTokens || 0) }));
+  return { rows: pageRows, total: sorted.length, offset: off, limit: lim, sortKey: key, sortDesc: !!desc };
 }
 
 // Snapshot is produced by a BACKGROUND refresher and served from memory.
@@ -257,45 +309,99 @@ function dashboardHtml() {
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Session statistics · ZCode</title>
+<script>
+// Restore the remembered theme BEFORE first paint, so a light-theme reader
+// never sees a dark flash on load. Kept inline and above the stylesheet: a
+// deferred or module script would run after the body has already painted.
+try {
+  var t = localStorage.getItem('sc-theme');
+  if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+} catch (e) {}
+</script>
 <style>
-  :root { color-scheme: dark; }
+  /* Theme is a set of custom properties so dark/light is a ONE-ATTRIBUTE swap
+     on <html> — no second stylesheet, no reload, no flicker. Dark stays the
+     default (color-scheme: dark) because the app it sits beside is dark by
+     default; the toggle below writes data-theme and persists it. */
+  :root, :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e1116; --panel: #161b23; --panel2: #12171e; --border: #232b36;
+    --border-hi: #3a4553; --fg: #dbe2ea; --fg-hi: #ffffff; --muted: #7d8794;
+    --accent: #4ade80; --ok: #4ade80; --err: #f87171; --cxl: #fbbf24;
+    --track: #232b36;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f7fa; --panel: #ffffff; --panel2: #f0f3f7; --border: #d7dee6;
+    --border-hi: #b6c1cd; --fg: #1f2933; --fg-hi: #0b1116; --muted: #5b6673;
+    --accent: #15803d; --ok: #15803d; --err: #dc2626; --cxl: #b45309;
+    --track: #e3e8ee;
+  }
   /* Only colors/text change in place; never the whole document — constant
      full-screen rewrites are a flicker/photosensitivity hazard. */
   body { font: 14px/1.6 -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
-         background: #0e1116; color: #dbe2ea; margin: 0; padding: 24px; }
+         background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
+         transition: background .15s linear, color .15s linear; }
   h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: #7d8794; font-size: 12px; margin-bottom: 20px; }
-  .bar { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin-bottom: 14px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+  .bar { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin-bottom: 14px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
-           border: 1px solid #232b36; border-radius: 999px; padding: 3px 10px; color: #7d8794; }
-  .badge button { background: none; border: 0; color: #dbe2ea; cursor: pointer;
+           border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
+  .badge button { background: none; border: 0; color: var(--fg); cursor: pointer;
                   font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 0; }
-  .badge button:hover { color: #fff; }
-  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: #4ade80; }
-  .badge.off .dot { background: #6b7280; }
+  .badge button:hover { color: var(--fg-hi); }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+  .badge.off .dot { background: var(--muted); }
   .spin { animation: rot 0.9s linear infinite; }
   @keyframes rot { to { transform: rotate(360deg); } }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(220px,1fr)); gap: 14px; max-width: 1100px; }
-  .card { background: #161b23; border: 1px solid #232b36; border-radius: 12px; padding: 16px 18px; }
-  .card .k { color: #7d8794; font-size: 12px; }
+  /* Top region: the headline cards on the left, the model split on the right.
+     Explicit two columns rather than auto-fit — the right half of this row was
+     empty before (four auto-fit cards never reached it), and the model mix is
+     the natural thing to put there. Collapses to one column on narrow windows. */
+  .top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(290px, 1fr);
+         gap: 14px; max-width: 1100px; align-items: stretch; }
+  .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card .k { color: var(--muted); font-size: 12px; }
   .card .v { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
-  .card .n { color: #7d8794; font-size: 12px; margin-top: 2px; }
+  .card .n { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  /* Model-mix panel (donut + legend). It fills its grid cell at any height, so
+     it lines up with the 2×2 card block beside it instead of floating short. */
+  .model { display: flex; flex-direction: column; }
+  .donutrow { display: flex; align-items: center; gap: 16px; margin-top: 8px; flex: 1; min-height: 0; }
+  .donutwrap { position: relative; flex: 0 0 auto; width: 138px; height: 138px; }
+  .donutwrap svg { display: block; width: 100%; height: 100%; }
+  .donutwrap .center { position: absolute; inset: 0; display: flex; flex-direction: column;
+                       align-items: center; justify-content: center; text-align: center; pointer-events: none; }
+  .donutwrap .center .big { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .donutwrap .center .cap { font-size: 10px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+  .legend { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+  .lrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: baseline;
+          gap: 8px; font-size: 12.5px; }
+  .lrow .sw { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
+  .lrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lrow .nm .pc { color: var(--muted); font-size: 11px; }
+  .lrow .tk { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
   table { border-collapse: collapse; margin-top: 22px; max-width: 1100px; width: 100%; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #232b36; font-size: 13px; }
-  th { color: #7d8794; font-weight: 500; cursor: pointer; user-select: none; white-space: nowrap; }
-  th:hover { color: #dbe2ea; }
-  th .arrow { font-size: 10px; margin-left: 4px; color: #4ade80; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { color: var(--fg); }
+  th .arrow { font-size: 10px; margin-left: 4px; color: var(--accent); }
   /* Pagination: a long session produces thousands of rows, which previously
      made the table run the full height of the page and forced endless
      scrolling. Ten rows per page keeps the whole view on one screen. */
   .pager { display: flex; align-items: center; gap: 10px; max-width: 1100px;
-           margin-top: 12px; color: #7d8794; font-size: 12px; }
-  .pager button { background: #161b23; border: 1px solid #232b36; border-radius: 8px;
-                  color: #dbe2ea; cursor: pointer; font: inherit; padding: 4px 12px; }
-  .pager button:hover:not(:disabled) { border-color: #3a4553; color: #fff; }
+           margin-top: 12px; color: var(--muted); font-size: 12px; }
+  .pager button { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+                  color: var(--fg); cursor: pointer; font: inherit; padding: 4px 12px; }
+  .pager button:hover:not(:disabled) { border-color: var(--border-hi); color: var(--fg-hi); }
   .pager button:disabled { opacity: .4; cursor: default; }
   .pager .pg { font-variant-numeric: tabular-nums; }
-  .ok { color: #4ade80; } .err { color: #f87171; } .cxl { color: #fbbf24; }
+  .ok { color: var(--ok); } .err { color: var(--err); } .cxl { color: var(--cxl); }
+  @media (max-width: 860px) {
+    .top { grid-template-columns: minmax(0, 1fr); }
+    .cards { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  }
 </style></head><body>
 <h1>⚡ Session statistics</h1>
 <div class="sub">ZCode · stats-composer · read-only on the usage DB, cannot affect the running client · newest request first · click a column header to toggle its sort</div>
@@ -306,9 +412,22 @@ function dashboardHtml() {
     </button>
   </span>
   <span class="badge"><button id="refreshNow" title="Refresh now"><span id="ricon">⟳</span> refresh</button></span>
+  <span class="badge"><button id="themeToggle" title="Switch between dark and light theme"><span id="themeIcon">☾</span><span id="themeLabel">Dark</span></button></span>
   <span class="sub" id="updated" style="margin:0"></span>
 </div>
-<div class="cards" id="cards"></div>
+<div class="top">
+  <div class="cards" id="cards"></div>
+  <div class="card model" id="modelCard">
+    <div class="k" id="modelTitle">Model mix</div>
+    <div class="donutrow">
+      <div class="donutwrap" id="donutwrap">
+        <svg id="donut" viewBox="0 0 42 42" role="img" aria-label="Share of generated tokens by model"></svg>
+        <div class="center"><div class="big" id="donutPct">—</div><div class="cap" id="donutCap">session</div></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+</div>
 <table id="tbl"><thead><tr>
 <th data-k="completedAt" data-label="Time">Time</th><th data-k="model" data-label="Model">Model</th><th data-k="tokPerSec" data-label="tok/s">tok/s</th><th data-k="ttftMs" data-label="TTFT">TTFT</th><th data-k="out" data-label="Output tok">Output tok</th><th data-k="cacheRead" data-label="Cache read">Cache read</th><th data-k="status" data-label="Status">Status</th>
 </tr></thead><tbody></tbody></table>
@@ -325,22 +444,91 @@ let sortKey = 'completedAt', sortDesc = true;
 let auto = true, busy = false, lastSig = '';
 const PAGE_SIZE = 10;
 let page = 0;                    // 0-based; clamped to the last page each render
-let sortedRows = [];             // the sorted full set; the page slices it
-const NUM = (v) => (v == null ? -Infinity : v);
+let total = 0, pages = 1;
+// ---- theme ----
+// One attribute on <html> flips every colour (see the stylesheet's custom
+// properties). The choice is remembered in localStorage so it survives the
+// reload the user does when they come back to this page.
+function setTheme(t){
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('sc-theme', t); } catch (e) {}
+  const i = document.getElementById('themeIcon'), l = document.getElementById('themeLabel');
+  if (i) i.textContent = t === 'dark' ? '\u263E' : '\u2600';
+  if (l) l.textContent = t === 'dark' ? 'Dark' : 'Light';
+}
+document.getElementById('themeToggle').addEventListener('click', () => {
+  setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light');
+});
+setTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+// ---- formatting ----
 function card(k,v,n){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="n">'+(n||'')+'</div></div>'; }
 function ms(v){ return v==null?'—':(v>=10000?(v/1000).toFixed(1)+'s':Math.round(v)+'ms'); }
 function dur(v){ return v==null?'—':(v>=60000?(v/60000).toFixed(1)+'m':ms(v)); }
+function tokN(v){ if(v==null) return '—'; if(v>=1e6) return (v/1e6).toFixed(2)+'M'; if(v>=1e3) return (v/1e3).toFixed(1)+'k'; return String(v); }
+// ---- model mix (donut + legend) ----
+// Palette chosen to stay distinguishable on both themes and to not rely on
+// green/red (those carry status meaning elsewhere on this page).
+const PALETTE = ['#60a5fa','#a78bfa','#f472b6','#fb923c','#facc15','#34d399','#22d3ee','#f87171','#c084fc','#4ade80'];
+function renderModels(models){
+  const svg = document.getElementById('donut'), legend = document.getElementById('legend');
+  const big = document.getElementById('donutPct'), cap = document.getElementById('donutCap');
+  const list = Array.isArray(models) ? models.filter(m => m && m.generated > 0) : [];
+  const totalGen = list.reduce((s,m) => s + (m.generated||0), 0);
+  const R = 15.9155; // r such that circumference == 100, so a share IS a dash length
+  if (!list.length){
+    svg.innerHTML = '<circle cx="21" cy="21" r="'+R+'" fill="none" stroke="var(--track)" stroke-width="6"></circle>';
+    big.textContent = '—'; cap.textContent = 'no data';
+    legend.innerHTML = '<div class="lrow" style="grid-template-columns:1fr"><span class="nm" style="color:var(--muted)">No completed requests yet</span></div>';
+    return;
+  }
+  let acc = 0, rings = '';
+  rings += '<circle cx="21" cy="21" r="'+R+'" fill="none" stroke="var(--track)" stroke-width="6"></circle>';
+  list.forEach((m, i) => {
+    const share = totalGen > 0 ? (m.generated / totalGen) * 100 : 0;
+    const color = PALETTE[i % PALETTE.length];
+    // -90deg rotation puts the first slice's start at 12 o'clock; a negative
+    // dashoffset advances each slice to its cumulative start (start = -offset).
+    rings += '<circle cx="21" cy="21" r="'+R+'" fill="none" stroke="'+color+'" stroke-width="6"' +
+      ' stroke-dasharray="'+share.toFixed(3)+' '+(100-share).toFixed(3)+'"' +
+      ' stroke-dashoffset="'+(-acc).toFixed(3)+'"></circle>';
+    acc += share;
+  });
+  svg.innerHTML = '<g transform="rotate(-90 21 21)">' + rings + '</g>';
+  big.textContent = tokN(totalGen);
+  cap.textContent = 'generated tok';
+  legend.innerHTML = list.map((m, i) => {
+    const share = totalGen > 0 ? (m.generated / totalGen) * 100 : 0;
+    const name = m.model || '(unknown)';
+    return '<div class="lrow" title="'+(name)+' · '+m.requests+' requests · avg '+((m.avgTps==null)?'—':m.avgTps)+' tok/s">' +
+      '<span class="sw" style="background:'+PALETTE[i % PALETTE.length]+'"></span>' +
+      '<span class="nm">'+name+' <span class="pc">'+tokN(m.generated)+' tok · '+m.requests+' req</span></span>' +
+      '<span class="tk">'+share.toFixed(1)+'%</span></div>';
+  }).join('');
+}
+// ---- per-request table ----
+async function getReqs(off){
+  const r = await fetch('/requests?offset='+off+'&limit='+PAGE_SIZE+'&sort='+sortKey+'&dir='+(sortDesc?'desc':'asc'));
+  return await r.json();
+}
 async function tick(manual){
   if (busy) return; busy = true;
   const icon = document.getElementById('ricon');
   if (icon) icon.classList.add('spin');
   try {
-    const r = await fetch('/stats?full=1'); const s = await r.json();
+    const off = page * PAGE_SIZE;
+    const [sr, q0] = await Promise.all([ fetch('/stats?full=1'), getReqs(off) ]);
+    const s = await sr.json();
+    let q = q0;
     const c = document.getElementById('cards'); if(s.error){ c.innerHTML='<div class="card">'+s.error+'</div>'; return; }
     const last=s.last, w=s.window, ss=s.session;
+    // The page can shrink under us (a session switch, or rows aging out), so
+    // re-clamp against the server's own total before rendering.
+    pages = Math.max(1, Math.ceil((q.total||0) / PAGE_SIZE));
+    if (page > pages-1){ page = pages-1; q = await getReqs(page*PAGE_SIZE); }
+    total = q.total || 0;
     // Signature of everything shown; skip DOM writes when nothing changed
     // (auto mode only) so idle sessions cause zero reflow.
-    const sig = JSON.stringify([s.last&&s.last.id, s.window && [s.window.avgTps,s.window.peakTps,s.window.samples], ss && [ss.samples,ss.outputTokens,ss.avgTps], (s.recent||[]).map(x=>x.id+(x.tokPerSec??'')+(x.status||''))]);
+    const sig = JSON.stringify([s.last&&s.last.id, s.window && [s.window.avgTps,s.window.peakTps,s.window.samples], ss && [ss.samples,ss.outputTokens,ss.avgTps], (ss&&ss.models)||[], page, sortKey, sortDesc, (q.rows||[]).map(x=>x.id+(x.tokPerSec||'')+(x.status||''))]);
     if (!manual && sig === lastSig) return;
     lastSig = sig;
     c.innerHTML = [
@@ -349,33 +537,16 @@ async function tick(manual){
       card('Last '+(w?.window||10)+' average', w?.avgTps ?? '—', 'peak '+(w?.peakTps ?? '—')+' tok/s'),
       card('Session output tok', ss ? (ss.outputTokens+ss.reasoningTokens) : '—', ss? (ss.samples+' samples · avg '+(ss.avgTps??'—')+' tok/s') : ''),
     ].join('');
-    const rows = (s.recent||[]).map(x => Object.assign({}, x, {
-      out: (x.outputTokens||0) + (x.reasoningTokens||0),
-      time: new Date(x.completedAt||0).toLocaleTimeString(),
-    }));
-    rows.sort((a,b) => {
-      const k = sortKey, dir = sortDesc ? -1 : 1;
-      const cmp = (k === 'model' || k === 'status')
-        ? String(a[k] ?? '').localeCompare(String(b[k] ?? ''))
-        : NUM(a[k]) - NUM(b[k]);
-      return cmp * dir;
-    });
-    sortedRows = rows;
+    renderModels(ss && ss.models);
     document.querySelectorAll('#tbl th').forEach(th => {
       th.innerHTML = th.dataset.label + (th.dataset.k === sortKey ? ' <span class="arrow">'+(sortDesc?'▼':'▲')+'</span>' : '');
     });
-    // Show one page at a time: a long session has thousands of rows, and
-    // rendering them all made the page scroll endlessly. The page index is
-    // clamped here (rows can shrink between ticks) so a stale page never
-    // leaves an empty table.
-    const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-    if (page > pages - 1) page = pages - 1;
-    if (page < 0) page = 0;
-    const start = page * PAGE_SIZE;
-    const pageRows = rows.slice(start, start + PAGE_SIZE);
     // Keyed in-place row update: reuse existing <tr> per request id, patch
     // cell values, then move rows into the sorted order (appendChild of an
     // existing node moves it) — never an innerHTML rebuild, so flicker-free.
+    // The rows are already sorted and sliced server-side, so this only ever
+    // sees one page — the table's depth is the session's, not a fixed cap.
+    const pageRows = q.rows || [];
     const tbody = document.getElementById('tbl').querySelector('tbody');
     const byId = new Map(pageRows.map((x) => [x.id, x]));
     const seen = new Set();
@@ -394,9 +565,9 @@ async function tick(manual){
       }
       tbody.appendChild(tr); // moves existing rows into sorted position too
     }
-    // Pager state.
+    // Pager state — page count comes from the full session, not the page.
     document.getElementById('pageInfo').textContent =
-      rows.length ? ('page ' + (page+1) + ' of ' + pages + ' · ' + rows.length + ' requests') : 'no requests';
+      total ? ('page ' + (page+1) + ' of ' + pages + ' · ' + total + ' requests') : 'no requests';
     document.getElementById('prev').disabled = page <= 0;
     document.getElementById('next').disabled = page >= pages - 1;
     document.getElementById('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
@@ -430,7 +601,8 @@ function patchRow(tr, x){
 const BS = String.fromCharCode(92);
 function cssEsc(s){ return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => BS + c.charCodeAt(0).toString(16) + ' '); }
 // Sorting is an inspection action — turn auto-refresh off so the view the
-// user is reading stays frozen while they look at it.
+// user is reading stays frozen while they look at it. Sorting happens on the
+// server across the WHOLE session, so it is correct at any table depth.
 document.querySelectorAll('#tbl th').forEach(th => th.addEventListener('click', () => {
   const k = th.dataset.k;
   if (sortKey === k) sortDesc = !sortDesc; else { sortKey = k; sortDesc = true; }
@@ -440,13 +612,16 @@ document.querySelectorAll('#tbl th').forEach(th => th.addEventListener('click', 
 }));
 // Pagination is an inspection action too: pause auto-refresh so the page the
 // user is reading is not re-sorted/re-sliced underneath them.
-document.getElementById('prev').addEventListener('click', () => { if (page > 0) { page--; if (auto) setAuto(false); tick(true); } });
-document.getElementById('next').addEventListener('click', () => { page++; if (auto) setAuto(false); tick(true); });
-// Keyboard: left/right arrows page when the table has focus-scope is the page.
+function goto(p){ page = Math.max(0, p); if (auto) setAuto(false); tick(true); }
+document.getElementById('prev').addEventListener('click', () => goto(page - 1));
+document.getElementById('next').addEventListener('click', () => goto(page + 1));
+// Keyboard: left/right arrows page; Home/End jump to the ends of the session.
 document.addEventListener('keydown', (e) => {
   if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-  if (e.key === 'ArrowLeft') { if (page > 0) { page--; if (auto) setAuto(false); tick(true); } }
-  else if (e.key === 'ArrowRight') { page++; if (auto) setAuto(false); tick(true); }
+  if (e.key === 'ArrowLeft' && page > 0) goto(page - 1);
+  else if (e.key === 'ArrowRight' && page < pages - 1) goto(page + 1);
+  else if (e.key === 'Home') goto(0);
+  else if (e.key === 'End') goto(pages - 1);
 });
 function setAuto(on){
   auto = on;
@@ -536,11 +711,43 @@ const server = createServer(async (req, res) => {
       if (requestSession(url.searchParams.get("session"))) refreshSnapshot(true);
       const snap = snapshotJson();
       // The pill wants only the headline numbers; the dashboard also wants the
-      // per-request table. Both come from the background refresher's cache —
-      // a request never opens the DB (see refreshSnapshot).
+      // last-turn summary. The per-request table is NOT here any more — it has
+      // its own paged endpoint below, so a long session no longer ships
+      // hundreds of rows on every 2 s poll.
       if (url.searchParams.has("full")) return sendJson(200, { ...snap, ...dashboardExtras() });
-      const { recent: _r, lastTurn: _t, ...slim } = snap;
+      const { lastTurn: _t, ...slim } = snap;
       return sendJson(200, slim);
+    }
+    if (url.pathname === "/requests" || url.pathname === "/requests.json") {
+      // One page of the per-request table, sorted over the whole session and
+      // sliced server-side. This is what makes the table unbounded: page 1 of
+      // 240 is real history, not a window inside the first 500 rows, and only
+      // the visible page crosses the wire.
+      noteDemand();
+      if (requestSession(url.searchParams.get("session"))) refreshSnapshot(true);
+      const q = url.searchParams;
+      const p = requestsPage(
+        Number(q.get("offset")) || 0,
+        Number(q.get("limit")) || 10,
+        q.get("sort") || "completedAt",
+        q.get("dir") !== "asc"
+      );
+      // The client wants a locale time string and a combined output figure per
+      // row; both are presentation, so they are added here where the row set is
+      // already in hand rather than in the browser over every row.
+      p.rows = p.rows.map((x) => ({
+        id: x.id,
+        time: x.completedAt ? new Date(x.completedAt).toLocaleTimeString() : "—",
+        model: x.model,
+        provider: x.providerId,
+        tokPerSec: x.tokPerSec,
+        ttftMs: x.ttftMs,
+        out: x.out,
+        cacheRead: x.cacheRead || 0,
+        status: x.status,
+      }));
+      p.sessionId = (SNAP && SNAP.sessionId) || null;
+      return sendJson(200, p);
     }
     if (url.pathname === "/metrics") {
       const snap = snapshotJson();

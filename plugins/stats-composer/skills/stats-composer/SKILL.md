@@ -13,12 +13,12 @@ Two numbers, per model request, for **every provider** (the data is written by Z
 ## Where the user sees stats
 
 1. **Composer pill** (integration mode) — an injected pill in the composer toolbar next to the "+" button. Requires the app to expose a CDP port (start once with `--remote-debugging-port=9229`). Hovering it opens the **Session statistics** card, which has two densities (see Settings).
-2. **Sidecar + dashboard** — `http://127.0.0.1:7427/dashboard` (auto-started; port file `~/.zcode/stats-composer/port`).
+2. **Sidecar + dashboard** — `http://127.0.0.1:7427/dashboard` (auto-started; port file `~/.zcode/stats-composer/port`). The page shows four headline cards, a **model-mix donut** (each model's share of generated tokens, with a legend), a **Dark/Light theme switch**, and a per-request table that is **paginated and unbounded** — sorted and sliced server-side over the whole session via `GET /requests`, so `page X of Y` counts every request, not the first 500.
 3. **Assistant-attached line** (fallback) — this skill, when no pill/dashboard is active.
 
 ## Settings (`userConfig`)
 
-Set from **Plugin Marketplace → Installed → Session Statistics (TPS/TTFT) → Configure**, or by hand in `~/.zcode/stats-composer/config.json`. The marketplace value wins when both are set.
+Set from **Settings → Plugins → (the plugin row) → Advanced details → Configuration**, then **Save configuration**; or by hand in `~/.zcode/stats-composer/config.json`. The marketplace value wins when both are set. (The store detail page shows no form for a fresh install — the marketplace value only appears there after something has been saved.)
 
 | Key | Default | Meaning |
 |---|---|---|

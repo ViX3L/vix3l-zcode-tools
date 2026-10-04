@@ -278,6 +278,22 @@ export function recentRequests(db, sid, n) {
     .map(toRow);
 }
 
+// EVERY completed request of one session, newest first — no LIMIT.
+//
+// The dashboard's table used to be capped at 500 rows (recentRequests(db, sid,
+// 500)), so a long session silently showed "page 1 of 50 · 500 requests" and
+// the rest of its history was unreachable. The cap existed to bound what the
+// server held per extras refresh, but the snapshot already scans the whole
+// session on every tick, so scanning it once more for the table is not the
+// expensive part; shipping every row to the browser on each 2 s poll was. The
+// page is therefore sliced server-side (see the dashboard's /requests
+// handling) and only the visible page crosses the wire, which makes the table
+// depth unlimited without the payload growing with the session.
+export function sessionRequests(db, sid) {
+  const { scopeSql, args } = scopeFor(db, sid);
+  return db.prepare(scopeSql + " ORDER BY completed_at DESC").all(...args).map(toRow);
+}
+
 // Aggregate for the whole session (see sessionAggregateFrom for the shared
 // span/busy accounting).
 export function sessionAggregate(db, sid) {
@@ -582,6 +598,64 @@ export function sessionAggregateFrom(rows) {
       0
     );
   }
+  // Which models did this session actually use, and how much of it did each
+  // account for? A session can switch models mid-flight (a fast model for
+  // mechanical turns, a heavier one for reasoning), and that split is invisible
+  // in the whole-session totals. Derived from `rows` — the same scan the rest
+  // of the snapshot already pays for — so this adds no query and rides the
+  // existing refresh cache for free.
+  //
+  // Share is measured on generated tokens (output + reasoning), the quantity a
+  // user means by "how much work did each model do". Requests are carried
+  // alongside so a model that ran many cheap turns is not misread as minor.
+  const byModel = new Map();
+  for (const r of rows) {
+    const key = r.model || "(unknown)";
+    let m = byModel.get(key);
+    if (!m) {
+      m = {
+        model: key,
+        provider: providerLabel(r.providerId, r.model),
+        requests: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        inputTokens: 0,
+        cacheRead: 0,
+        genMs: 0,
+        tokPerSecSum: 0,
+        rated: 0,
+      };
+      byModel.set(key, m);
+    }
+    m.requests += 1;
+    m.outputTokens += r.outputTokens || 0;
+    m.reasoningTokens += r.reasoningTokens || 0;
+    m.inputTokens += r.inputTokens || 0;
+    m.cacheRead += r.cacheRead || 0;
+    if (r.genMs != null) m.genMs += r.genMs;
+    if (r.tokPerSec != null) { m.tokPerSecSum += r.tokPerSec; m.rated += 1; }
+  }
+  const models = Array.from(byModel.values()).map((m) => {
+    const generated = m.outputTokens + m.reasoningTokens;
+    return {
+      model: m.model,
+      provider: m.provider,
+      requests: m.requests,
+      outputTokens: m.outputTokens,
+      reasoningTokens: m.reasoningTokens,
+      generated,
+      avgTps: m.rated ? Math.round((m.tokPerSecSum / m.rated) * 10) / 10 : null,
+    };
+  });
+  const totalGenerated = models.reduce((s, m) => s + m.generated, 0);
+  for (const m of models) {
+    m.share = totalGenerated > 0 ? Math.round((m.generated / totalGenerated) * 1000) / 10 : 0;
+  }
+  // Rank by share, then by generated tokens, so the chart's largest slice is
+  // first and ties break deterministically.
+  models.sort((a, b) => b.share - a.share || b.generated - a.generated || String(a.model).localeCompare(String(b.model)));
+  agg.models = models;
+  agg.modelCount = models.length;
   return agg;
 }
 

@@ -80,6 +80,59 @@ if (port) {
 }
 add("sidecar", !!port && sidecar, port && sidecar ? `http://127.0.0.1:${port} (dashboard /dashboard)` : port ? `stale port file :${port}` : "not running (started automatically when needed)");
 
+// 4b. MCP server handshake. ZCode's stdio client reads NEWLINE-DELIMITED JSON
+// (it splits on "\n" and parses each line, skipping SyntaxErrors), so a server
+// that writes any other framing — LSP-style Content-Length, say — never
+// completes `initialize` and the plugin's MCP row turns red with a 30 s
+// timeout while the process itself is perfectly healthy. That failure is
+// invisible to every other check here (the process starts, the tools work over
+// stdin), so the doctor speaks to it the same way the app does: one JSON line
+// in, and the reply must parse as a single line.
+async function checkMcp() {
+  const { spawn } = await import("node:child_process");
+  const serverPath = path.join(import.meta.dirname, "..", "mcp", "stats-server.mjs");
+  if (!fs.existsSync(serverPath)) return { ok: false, detail: "mcp/stats-server.mjs missing" };
+  return await new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(process.execPath, [serverPath], { stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, ZCODE_PLUGIN_ROOT: path.join(import.meta.dirname, "..") } });
+    } catch (e) {
+      return resolve({ ok: false, detail: `spawn failed: ${e?.message || e}` });
+    }
+    let out = "";
+    const done = (r) => { try { child.kill(); } catch {} resolve(r); };
+    const timer = setTimeout(() => done({ ok: false, detail: "no reply to initialize within 5s — framing or startup problem" }), 5000);
+    child.stdout.on("data", (c) => {
+      out += c.toString();
+      const nl = out.indexOf("\n");
+      if (nl < 0) return;
+      clearTimeout(timer);
+      const line = out.slice(0, nl).replace(/\r$/, "");
+      // The app parses exactly this line. If it is a Content-Length header or
+      // otherwise not standalone JSON, the handshake would fail there.
+      if (/^\s*Content-Length:/i.test(line)) return done({ ok: false, detail: "replied with Content-Length framing — the app reads newline-delimited JSON and would time out" });
+      try {
+        const msg = JSON.parse(line);
+        const name = msg?.result?.serverInfo?.name;
+        done(name ? { ok: true, detail: `handshake ok — ${name} (newline-delimited JSON)` } : { ok: false, detail: `unexpected reply: ${line.slice(0, 80)}` });
+      } catch {
+        done({ ok: false, detail: `reply is not standalone JSON: ${line.slice(0, 80)}` });
+      }
+    });
+    child.on("error", (e) => { clearTimeout(timer); done({ ok: false, detail: `spawn error: ${e?.message || e}` }); });
+    try {
+      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "doctor", version: "0" } } }) + "\n");
+    } catch (e) {
+      clearTimeout(timer);
+      done({ ok: false, detail: `write failed: ${e?.message || e}` });
+    }
+  });
+}
+{
+  const r = await checkMcp();
+  add("mcp", r.ok, r.detail);
+}
+
 // 5. CDP (composer pill availability). Electron's /json/version reports a
 // bare Chromium identity ("Chrome/146..."), so Browser-header matching is
 // wrong — recognize the app by its renderer page shape, same as the injector.
