@@ -1,6 +1,6 @@
 {
   "name": "usage-context",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Per-turn token-usage chips for ZCode, shown in each assistant turn's footer right of the timestamp: 'Usage N tok' and 'Ran for Ns'. Hovering either chip opens a panel with the full breakdown ZCode records for that turn (total, cache hit %, uncached input, cached input, output, provider/model, steps). Reads turn_usage data from the stats-composer sidecar (one shared server, no second process of its own).",
   "author": {
     "name": "ViX3L"

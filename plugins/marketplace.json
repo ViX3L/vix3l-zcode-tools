@@ -6,7 +6,7 @@
     {
       "name": "stats-composer",
       "source": "./stats-composer",
-      "version": "0.1.17",
+      "version": "0.1.18",
       "description": "Per-request TPS (tok/s) and TTFT stats in the composer toolbar, next to the + button; works with all providers including custom endpoints. The session-statistics hover card can be wide (default) or compact, chosen from the plugin settings. The hover card also reports recent subagent activity (rate, TTFT, which agents) as its own block, never mixed into your session figures.",
       "displayName": "Session Statistics (TPS/TTFT)",
       "icon": "https://raw.githubusercontent.com/ViX3L/vix3l-zcode-tools/main/plugins/stats-composer/icon.svg",
@@ -18,7 +18,7 @@
     {
       "name": "usage-context",
       "source": "./usage-context",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Per-turn token usage and elapsed time beside each assistant turn's timestamp, with hover panels for the full breakdown. Reads turn data from the stats-composer sidecar (no second server).",
       "displayName": "Turn Usage Context",
       "icon": "https://raw.githubusercontent.com/ViX3L/vix3l-zcode-tools/main/plugins/usage-context/icon.svg",

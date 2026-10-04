@@ -14,7 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { CI_WORKFLOW, RELEASE_WORKFLOW, RELEASE_PLAN, PACKAGE_PLUGIN_SH, GITHUB_DIR, REPO_ROOT, STATS } from "../lib/paths.mjs";
+import { CI_WORKFLOW, RELEASE_WORKFLOW, RELEASE_PLAN, PACKAGE_PLUGIN_SH, CHANGELOG_NOTES, GITHUB_DIR, REPO_ROOT, STATS } from "../lib/paths.mjs";
 
 const read = (p) => fs.readFileSync(p, "utf8");
 
@@ -75,6 +75,19 @@ test("the scripts the workflows call exist and are runnable", () => {
   assert.ok(read(RELEASE_WORKFLOW).includes(rel), `release.yml must invoke ${rel}`);
   const shRel = path.relative(REPO_ROOT, PACKAGE_PLUGIN_SH);
   assert.ok(read(RELEASE_WORKFLOW).includes(shRel), `release.yml must invoke ${shRel}`);
+  const notesRel = path.relative(REPO_ROOT, CHANGELOG_NOTES);
+  assert.ok(read(RELEASE_WORKFLOW).includes(notesRel), `release.yml must invoke ${notesRel}`);
+});
+
+test("the release body comes from the changelog, not GitHub's commit list", () => {
+  // The whole point of the changelog tooling: a release must say what changed.
+  // GitHub's auto-generated notes are a commit list, which tells a user nothing
+  // about the version — so they are off, and the body is read from the file the
+  // changelog extractor composed.
+  const yml = read(RELEASE_WORKFLOW);
+  assert.match(yml, /generate_release_notes: false/, "generated commit-list notes must be off");
+  assert.match(yml, /body_path: dist\/release-body\.md/, "the body must come from the composed changelog file");
+  assert.ok(yml.includes("changelog-notes.mjs"), "the release must invoke the changelog extractor");
 });
 
 test("the launcher script a desktop entry Exec= runs is executable", () => {

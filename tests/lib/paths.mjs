@@ -35,6 +35,12 @@ export const RELEASE_PLAN = path.join(GITHUB_DIR, "scripts", "release-plan.mjs")
 export const PACKAGE_PLUGIN_SH = path.join(GITHUB_DIR, "scripts", "package-plugin.sh");
 export const CI_WORKFLOW = path.join(GITHUB_DIR, "workflows", "ci.yml");
 export const RELEASE_WORKFLOW = path.join(GITHUB_DIR, "workflows", "release.yml");
+export const CHANGELOG_NOTES = path.join(GITHUB_DIR, "scripts", "changelog-notes.mjs");
+
+// Per-plugin changelogs, and the root index that points at them.
+export const STATS_CHANGELOG = path.join(STATS, "CHANGELOG.md");
+export const USAGE_CHANGELOG = path.join(USAGE, "CHANGELOG.md");
+export const ROOT_CHANGELOG = path.join(REPO_ROOT, "CHANGELOG.md");
 
 // Every .mjs we ship, for the "do they all parse" sweep. Includes the release
 // tooling under .github/scripts: a syntax error there fails a release rather

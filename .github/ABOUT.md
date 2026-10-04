@@ -61,27 +61,31 @@ tag. Two tag shapes are supported:
 
 | Tag | Releases |
 |---|---|
-| `v0.1.17` | every plugin, each at its current manifest version |
-| `stats-composer-v0.1.17` | only `stats-composer` |
+| `v0.1.18` | every plugin, each at its current manifest version |
+| `stats-composer-v0.1.18` | only `stats-composer` |
 | `usage-context-v0.1.2` | only `usage-context` |
 
 The tag's version must equal the version in the plugin's
 `.zcode-plugin/plugin.json`, and the three places a version is declared (the
 plugin manifest, the root `marketplace.json`, and `plugins/marketplace.json`)
 must agree — the CI suite enforces the latter. Each Release carries the plugin's
-own source tree as a `.zip` and a `.tar.gz`, plus a `.sha256` checksums file.
+own source tree as a `.zip` and a `.tar.gz`, plus a `.sha256` checksums file, and
+its notes are the plugin's changelog section for that version
+(`plugins/<name>/CHANGELOG.md`) rather than GitHub's auto-generated commit list.
 
-To cut a release: bump the version in all three declarations, commit, then push
-the tag. For example, for `stats-composer`:
+To cut a release: bump the version in all three declarations, add the version's
+changelog section, commit, then push the tag. For example, for `stats-composer`:
 
 ```sh
 # edit plugins/stats-composer/.zcode-plugin/plugin.json,
-#      marketplace.json, plugins/marketplace.json  → 0.1.17
-git add -A && git commit -m "release: stats-composer 0.1.17"
+#      marketplace.json, plugins/marketplace.json  → 0.1.18
+#      plugins/stats-composer/CHANGELOG.md         → add "## [0.1.18] - <date>"
+git add -A && git commit -m "release: stats-composer 0.1.18"
 git push
-git tag stats-composer-v0.1.17
-git push origin stats-composer-v0.1.17
+git tag stats-composer-v0.1.18
+git push origin stats-composer-v0.1.18
 ```
 
 The workflow runs the full test suite first, so a tag cannot publish a build
-that fails its own tests.
+that fails its own tests. It also fails if the version has no changelog section,
+so a Release can never be published with empty notes.

@@ -156,18 +156,26 @@ const PILL_JS_TEMPLATE = `
   // instead of the idempotence check answering 'already' and leaving the old
   // layout on screen until a reload.
   var LAYOUT = '__CARD_LAYOUT__';
-  var VERSION = '39-' + LAYOUT;
+  var VERSION = '40-' + LAYOUT;
   var EPOCH = Math.random().toString(36).slice(2, 10);
+  const SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
+  // The sidecar port is part of the generation identity. A generation left
+  // polling a stale or absent port (a manual or test injector started with a
+  // different --sidecar-port, or a sidecar that moved) must be supersedable by
+  // a correct one; otherwise the guard below answers 'already', the pill keeps
+  // requesting a dead port, and it stays empty until the page is reloaded.
+  const PORT = SIDECAR.slice(SIDECAR.lastIndexOf(':') + 1);
   // Document singleton: exactly one poller and one generation identity exist
   // per page, so a re-injection REPLACES the running generation instead of
   // leaving an orphan behind (the bug class that produced live-but-empty pills
   // and a sidecar hammered by dead generations).
-  var S = (window.__tpsStats = window.__tpsStats || { version: null, epoch: null, timer: null, handlers: null, hovering: false });
-  var aliveHere = S.version === VERSION && S.epoch !== null && S.dead !== true;
+  var S = (window.__tpsStats = window.__tpsStats || { version: null, epoch: null, port: null, timer: null, handlers: null, hovering: false });
+  var aliveHere = S.version === VERSION && S.port === PORT && S.epoch !== null && S.dead !== true;
   if (aliveHere) return 'already';
   // Supersede: mark the old generation dead, then claim the singleton.
   S.dead = true;
   S.version = VERSION;
+  S.port = PORT;
   S.epoch = EPOCH;
   S.hovering = false;
   S.timer = null;
@@ -185,7 +193,6 @@ const PILL_JS_TEMPLATE = `
   marker.style.display = 'none';
   (document.body || document.documentElement).appendChild(marker);
 
-  const SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
   const state = { tps: null, ttft: null, winAvg: null, streaming: false, model: '', snap: null, dead: false };
   let shadowHost = null;
   // Our host, found by class (never by id — see buildHost).

@@ -132,14 +132,28 @@ const PAGE_JS = `
   // S.version is bumped when PAGE_JS changes materially; the document singleton
   // makes a re-injection REPLACE the running generation instead of orphaning it.
   // 8: the Turn time panel's header no longer repeats its only row's figure.
-  var VERSION = '8';
+  // 9: the sidecar port is part of the generation identity, so a generation
+  //    left polling a stale port is superseded instead of answering 'already'.
+  var VERSION = '9';
   var EPOCH = Math.random().toString(36).slice(2, 10);
-  var S = (window.__usageContext = window.__usageContext || { version: null, epoch: null, timer: null, handlers: null, hovering: null });
+  var SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
+  // The sidecar port is part of the generation identity (see aliveHere). Baked
+  // in at launch, so it also identifies which sidecar this generation talks to.
+  var PORT = SIDECAR.slice(SIDECAR.lastIndexOf(':') + 1);
+  var S = (window.__usageContext = window.__usageContext || { version: null, epoch: null, port: null, timer: null, handlers: null, hovering: null });
 
-  var aliveHere = S.version === VERSION && S.epoch !== null && S.dead !== true;
+  // A generation is only "alive" if it is this build AND pointed at the same
+  // sidecar port. Port is part of the identity so a generation left running
+  // against a stale/absent port (e.g. a manual or test injector started with a
+  // different --sidecar-port) can be superseded by a correct one — otherwise the
+  // guard answers 'already', the broken generation keeps polling a dead port,
+  // and the chips stay at "—" until the page is reloaded. A build from before
+  // this field existed has S.port undefined, so it re-injects once to upgrade.
+  var aliveHere = S.version === VERSION && S.port === PORT && S.epoch !== null && S.dead !== true;
   if (aliveHere) return 'already';
   S.dead = true;
   S.version = VERSION;
+  S.port = PORT;
   S.epoch = EPOCH;
   S.hovering = null;
   S.dead = false;
@@ -153,7 +167,6 @@ const PAGE_JS = `
     for (var i = 0; i < old.length; i++) { try { old[i].remove(); } catch (e) {} }
   })();
 
-  var SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
   var state = { byMsg: null, sessionId: null, fetchedAt: 0, lastErr: null };
   // Chips we have created, keyed by the turn's data-turn-id. Kept so a re-render
   // patches text in place (never replaces nodes under the cursor).

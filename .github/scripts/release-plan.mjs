@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Turn a git tag into the list of plugins to release, and emit it as a GitHub
 // Actions matrix. Kept as a script (not inline YAML) so it can be run and tested
-// locally: `.github/scripts/release-plan.mjs v0.1.17`, `... stats-composer-v0.1.17`.
+// locally: `.github/scripts/release-plan.mjs v0.1.18`, `... stats-composer-v0.1.18`.
 //
 // Tag shapes:
 //   v<version>                  → every plugin, each at its CURRENT manifest version

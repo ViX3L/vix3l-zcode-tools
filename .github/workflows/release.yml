@@ -3,14 +3,14 @@
 # A release is created by pushing a version tag. Two tag shapes are supported so
 # a monorepo of independent plugins can release either together or separately:
 #
-#   v0.1.17                       → releases every plugin at its current version
-#   stats-composer-v0.1.17        → releases only stats-composer, at that version
+#   v0.1.18                       → releases every plugin at its current version
+#   stats-composer-v0.1.18        → releases only stats-composer, at that version
 #   usage-context-v0.1.2          → releases only usage-context
 #
 # The tag's version MUST equal the version declared in that plugin's
 # .zcode-plugin/plugin.json. A mismatch fails the run before anything is
-# published, because a Release whose asset says 0.1.17 while the manifest says
-# 0.1.16 is worse than no Release at all.
+# published, because a Release whose asset says 0.1.18 while the manifest says
+# 0.1.17 is worse than no Release at all.
 #
 # Each released plugin gets:
 #   * a GitHub Release tagged as above, with generated notes
@@ -32,7 +32,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)release, e.g. stats-composer-v0.1.17"
+        description: "Existing tag to (re)release, e.g. stats-composer-v0.1.18"
         required: true
         type: string
 
@@ -104,21 +104,47 @@ jobs:
         id: pkg
         run: bash .github/scripts/package-plugin.sh "${{ matrix.plugin }}" "${{ matrix.version }}"
 
+      # The Release body is the plugin's own changelog section for this exact
+      # version, NOT GitHub's auto-generated commit list. A commit list tells a
+      # user which commits landed; it does not tell them what the version does.
+      # The extractor fails the run when the version has no changelog section, so
+      # a release can never be published with empty or commit-redirecting notes.
+      #
+      # The notes are composed into a file because a Release body is multi-line
+      # and `$GITHUB_OUTPUT` has no clean way to carry that; `body_path` reads the
+      # file directly, so nothing multi-line has to cross an output boundary.
+      - name: Compose the Release notes from the changelog
+        run: |
+          notes="dist/release-body.md"
+          mkdir -p dist
+          {
+            echo "## What's changed in \`${{ matrix.plugin }}\` ${{ matrix.version }}"
+            echo
+            node .github/scripts/changelog-notes.mjs "${{ matrix.plugin }}" "${{ matrix.version }}"
+            echo
+            echo "---"
+            echo
+            echo "### Install"
+            echo
+            echo "Add \`https://github.com/${{ github.repository }}\` as a plugin marketplace in"
+            echo "ZCode, or download the archive below and unpack it into your ZCode plugins"
+            echo "directory. Archives are the plugin's own source tree, so they can also be"
+            echo "pointed at as a local marketplace directory."
+            echo
+            echo "Full history: [\`plugins/${{ matrix.plugin }}/CHANGELOG.md\`](https://github.com/${{ github.repository }}/blob/main/plugins/${{ matrix.plugin }}/CHANGELOG.md)"
+          } > "$notes"
+          echo "--- composed Release notes ---"
+          cat "$notes"
+
       - name: Create the Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ matrix.tag }}
           name: ${{ matrix.title }}
-          generate_release_notes: true
-          body: |
-            ${{ matrix.plugin }} ${{ matrix.version }}
-
-            Install from the marketplace (add `https://github.com/${{ github.repository }}`
-            as a plugin marketplace in ZCode), or download the archive below and unpack it
-            into your ZCode plugins directory.
-
-            Archives are the plugin's own source tree, so they can also be pointed at as a
-            local marketplace directory.
+          # The body is the changelog-derived file above. GitHub's generated
+          # commit list is off on purpose — it is the behaviour this replaces.
+          generate_release_notes: false
+          body_path: dist/release-body.md
           files: |
             dist/${{ matrix.plugin }}-${{ matrix.version }}.zip
             dist/${{ matrix.plugin }}-${{ matrix.version }}.tar.gz
