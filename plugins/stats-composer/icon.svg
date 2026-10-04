@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none" role="img" aria-label="Session statistics: per-request speed and first-token latency">
+  <!-- Speedometer: the per-request rate (TPS), with the needle at the first-token mark (TTFT). -->
+  <path d="M8 35A16 16 0 0 1 40 35" stroke="#4099ff" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M24 35 33.5 24.5" stroke="#4099ff" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="24" cy="35" r="3.25" fill="#4099ff"/>
+</svg>

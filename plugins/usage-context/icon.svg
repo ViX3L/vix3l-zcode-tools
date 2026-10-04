@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none" role="img" aria-label="Turn usage: per-turn token and time breakdown">
+  <!-- Speech bubble (one turn) carrying a small bar chart (that turn's token usage). -->
+  <path d="M9 11h30a4 4 0 0 1 4 4v15a4 4 0 0 1-4 4H22l-8.5 7v-7H9a4 4 0 0 1-4-4V15a4 4 0 0 1 4-4Z"
+        stroke="#4099ff" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M17 27v-4.5M24 27v-9M31 27v-6.5" stroke="#4099ff" stroke-width="3" stroke-linecap="round"/>
+</svg>

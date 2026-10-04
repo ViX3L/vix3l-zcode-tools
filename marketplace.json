@@ -6,9 +6,10 @@
     {
       "name": "stats-composer",
       "source": "./plugins/stats-composer",
-      "version": "0.1.11",
+      "version": "0.1.12",
       "description": "Per-request TPS (tok/s) and TTFT stats in the composer toolbar, next to the + button; works with all providers including custom endpoints.",
       "displayName": "Session Statistics (TPS/TTFT)",
+      "icon": "https://raw.githubusercontent.com/ViX3L/vix3l-zcode-tools/main/plugins/stats-composer/icon.svg",
       "category": "developer-tools",
       "author": {
         "name": "ViX3L"
@@ -20,6 +21,7 @@
       "version": "0.1.0",
       "description": "Per-turn token usage and elapsed time beside each assistant turn's timestamp, with hover panels for the full breakdown. Reads turn data from the stats-composer sidecar (no second server).",
       "displayName": "Turn Usage Context",
+      "icon": "https://raw.githubusercontent.com/ViX3L/vix3l-zcode-tools/main/plugins/usage-context/icon.svg",
       "category": "developer-tools",
       "author": {
         "name": "ViX3L"

@@ -107,7 +107,7 @@ const PILL_JS = `
   // (observed: the live node lost __owner while keeping our shadow root, which
   // made every poller treat it as foreign and rebuild it). Ownership is
   // therefore the document singleton, and the EPOCH is the generation id.
-  var VERSION = '36';
+  var VERSION = '37';
   var EPOCH = Math.random().toString(36).slice(2, 10);
   // Document singleton: exactly one poller and one generation identity exist
   // per page, so a re-injection REPLACES the running generation instead of
@@ -187,16 +187,16 @@ const PILL_JS = `
     '<div class="cmain">' +
       '<div class="ccol">' +
         '<div class="crows">' +
-          '<div class="cr"><span class="cd"></span><span class="cl">LLM time</span><span class="cv v-llm">—</span></div>' +
-          '<div class="cr"><span class="cd"></span><span class="cl">Tool time</span><span class="cv v-toolt">—</span></div>' +
+          '<div class="cr g4"><span class="cd"></span><span class="cl">LLM time</span><span class="cv v-llm">—</span></div>' +
+          '<div class="cr g4"><span class="cd"></span><span class="cl">Tool time</span><span class="cv v-toolt">—</span></div>' +
         '</div>' +
       '</div>' +
       '<div class="cdivv" aria-hidden="true"></div>' +
       '<div class="ccol">' +
         '<div class="crows">' +
-          '<div class="cr"><span class="cd"></span><span class="cl">Turns</span><span class="cv v-turns">—</span></div>' +
-          '<div class="cr"><span class="cd"></span><span class="cl">Steps</span><span class="cv v-steps">—</span></div>' +
-          '<div class="cr"><span class="cd"></span><span class="cl">Tool calls</span><span class="cv v-toolcalls">—</span></div>' +
+          '<div class="cr g4"><span class="cd"></span><span class="cl">Turns</span><span class="cv v-turns">—</span></div>' +
+          '<div class="cr g4"><span class="cd"></span><span class="cl">Steps</span><span class="cv v-steps">—</span></div>' +
+          '<div class="cr g4"><span class="cd"></span><span class="cl">Tool calls</span><span class="cv v-toolcalls">—</span></div>' +
         '</div>' +
       '</div>' +
     '</div>' +
@@ -204,11 +204,11 @@ const PILL_JS = `
     // Session token panel, the same figures as the app's own "Token usage"
     // card (image 1). The divider above is the one that "already exists".
     '<div class="crows">' +
-      '<div class="cr"><span class="cd"></span><span class="cl">Token usage</span><span class="cv v-toktotal">—</span></div>' +
-      '<div class="cr"><span class="cd"></span><span class="cl">Cache hit</span><span class="cv v-cachehit">—</span></div>' +
-      '<div class="cr"><span class="cd"></span><span class="cl">Uncached input</span><span class="cv v-uncached">—</span></div>' +
-      '<div class="cr"><span class="cd"></span><span class="cl">Cached input</span><span class="cv v-cached">—</span></div>' +
-      '<div class="cr"><span class="cd"></span><span class="cl">Output</span><span class="cv v-output">—</span></div>' +
+      '<div class="cr g3"><span class="cd"></span><span class="cl">Token usage</span><span class="cv v-toktotal">—</span></div>' +
+      '<div class="cr g3"><span class="cd"></span><span class="cl">Cache hit</span><span class="cv v-cachehit">—</span></div>' +
+      '<div class="cr g3"><span class="cd"></span><span class="cl">Uncached input</span><span class="cv v-uncached">—</span></div>' +
+      '<div class="cr g3"><span class="cd"></span><span class="cl">Cached input</span><span class="cv v-cached">—</span></div>' +
+      '<div class="cr g3"><span class="cd"></span><span class="cl">Output</span><span class="cv v-output">—</span></div>' +
     '</div>' +
     '<div class="cfoot"><span class="cl">Average session rate</span><span class="cv c-avg">—</span></div>';
 
@@ -333,27 +333,29 @@ const PILL_JS = `
       ' animation: zc-pulse 1.2s ease-in-out infinite; }',
       '@keyframes zc-pulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }',
       '.idle .dot { display: none; }',
-      // Card: fixed-position panel ABOVE the pill. Values below are lifted from
-      // the app's own "Context windows" hover card (read live off its computed
-      // styles): neutral #2b2b2b surface, 12px radius, 1px rgba(255,255,255,.1)
-      // hairline, rows on a 6px rhythm, rounded-square blue bullets, monospace
-      // values, and 60%-white labels/subtitles. Text metrics and anything that
+      // Card: fixed-position panel ABOVE the pill. The surface, radius, hairline,
+      // bullet colour/shape, mono values and 60%-white labels are lifted from the
+      // app's own "Context windows" hover card (read live off its computed
+      // styles). Two things are deliberately ROOMIER than that panel, at the
+      // user's request: every row now carries a graded bullet opacity (see the
+      // ladder below) instead of one pale default, and the row rhythm / card
+      // width / gutters are wider for legibility. Text metrics and anything that
       // could clip are expressed in em/relative units so a font-size change
       // rescales the card instead of overflowing it.
-      '.cardp { position: fixed; z-index: 2147483000; display: none; min-width: 24em;',
+      '.cardp { position: fixed; z-index: 2147483000; display: none; min-width: 30em;',
       ' background: #2b2b2b; border: 1px solid rgba(255,255,255,.1); border-radius: 12px;',
-      ' padding: 12px; overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.45);',
+      ' padding: 14px 16px; overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.45);',
       ' color: #f8f8f8;',
       ' font-family: var(--sc-font); font-size: var(--sc-sm);',
       ' font-weight: var(--font-weight-normal, 400); line-height: 1.6; }',
       '.cardp .ch { display: flex; justify-content: space-between; align-items: center; gap: 12px;',
-      ' margin-bottom: 12px; }',
+      ' margin-bottom: 16px; }',
       '.cardp .ct { font-weight: var(--font-weight-medium, 500); font-size: var(--sc-base);',
       ' line-height: 1.4; color: #f8f8f8; }',
       '.cardp .cico { color: #4099ff; font-weight: var(--font-weight-semibold, 600); margin-right: 4px; }',
       '.cardp .ch .cv { font-family: var(--sc-mono);',
       ' color: rgba(248,248,248,.6); font-weight: var(--font-weight-normal, 400); }',
-      '.cardp .cdiv { height: 1px; background: rgba(255,255,255,.1); margin: 10px 0; }',
+      '.cardp .cdiv { height: 1px; background: rgba(255,255,255,.1); margin: 14px 0; }',
       // Two columns inside .cmain only (the time figures and the turn context),
       // joined by a SIDEWAYS rule: a 1px element with a transparent background
       // and a left hairline border, so it separates without painting a block and
@@ -361,16 +363,22 @@ const PILL_JS = `
       // The four rate rows are NOT in here — they are full-width rows above.
       '.cardp .cmain { display: flex; align-items: stretch; gap: 0; }',
       '.cardp .ccol { flex: 1 1 0; min-width: 0; }',
-      '.cardp .cdivv { flex: none; width: 1px; margin: 0 12px; background: transparent;',
+      '.cardp .cdivv { flex: none; width: 1px; margin: 0 16px; background: transparent;',
       ' border-left: 1px solid rgba(255,255,255,.1); }',
-      '.cardp .cr { display: flex; align-items: center; gap: 8px; min-height: 1.6em; }',
+      '.cardp .cr { display: flex; align-items: center; gap: 10px; min-height: 1.9em; }',
       '.cardp .cd { width: .67em; height: .67em; border-radius: .33em; background: #4099ff; flex: none;',
-      ' opacity: .45; }',
-      // Graded bullet opacity, as in the app's own panel (measured there between
-      // ~0.32 and ~0.79): the headline figures keep the strongest dot, secondary
-      // ones fade back.
-      '.cardp .cr.g1 .cd { opacity: .8; }',
-      '.cardp .cr.g2 .cd { opacity: .45; }',
+      ' opacity: .65; }',
+      // Graded bullet opacity — native colour and rounded-square shape kept
+      // (the app's own panel grades its headline rows in and its secondary ones
+      // back), but EVERY section now carries a deliberate tier instead of
+      // falling through to one pale default. The ladder is sorted from the
+      // headline rates down to the most secondary context:
+      //   g1 1.0  Latest request (matches the pill)   g3 .68  Token usage block
+      //   g2 .78  Last-N averages                     g4 .55  time / turn context
+      '.cardp .cr.g1 .cd { opacity: 1; }',
+      '.cardp .cr.g2 .cd { opacity: .78; }',
+      '.cardp .cr.g3 .cd { opacity: .68; }',
+      '.cardp .cr.g4 .cd { opacity: .55; }',
       // The label keeps its CONTENT width and never wraps ("Tool time" must stay
       // on one line even in the narrower two-column block); the value takes the
       // remaining space and is pushed to the right edge. A label with flex-basis
@@ -379,9 +387,9 @@ const PILL_JS = `
       '.cardp .cl { flex: none; white-space: nowrap; color: rgba(248,248,248,.6); }',
       '.cardp .cv { flex: 1 1 auto; min-width: 0; text-align: right; color: #f8f8f8;',
       ' font-family: var(--sc-mono); font-variant-numeric: tabular-nums; }',
-      '.cardp .crows { display: grid; gap: 6px; }',
+      '.cardp .crows { display: grid; gap: 10px; }',
       '.cardp .cfoot { display: flex; align-items: center; justify-content: space-between; gap: 12px;',
-      ' margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.1); }',
+      ' margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); }',
       '.cardp .cfoot .cl { flex: 1; min-width: 0; color: rgba(248,248,248,.6); }',
       '.cardp .cfoot .cv { color: #f8f8f8; }',
     ].join('');
