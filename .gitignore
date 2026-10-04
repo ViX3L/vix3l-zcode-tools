@@ -5,3 +5,7 @@ wiki
 docs
 AGENTS.md
 llm-wiki.md
+.kilo
+
+# ZCode client's local file-search config (machine-specific)
+.zcodeignore
