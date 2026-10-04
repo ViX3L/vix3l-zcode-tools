@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as m from "./lib/metrics.mjs";
-import { appRootFromEnv, appBinaryFor, candidateAppBinaries } from "./lib/runtime.mjs";
+import { appRootFromEnv, appBinaryFor, candidateAppBinaries, spawnNodePiped } from "./lib/runtime.mjs";
 
 const RUN_DIR = path.join(os.homedir(), ".zcode", "stats-composer");
 const CONFIG_FILE = path.join(RUN_DIR, "config.json");
@@ -89,16 +89,15 @@ add("sidecar", !!port && sidecar, port && sidecar ? `http://127.0.0.1:${port} (d
 // stdin), so the doctor speaks to it the same way the app does: one JSON line
 // in, and the reply must parse as a single line.
 async function checkMcp() {
-  const { spawn } = await import("node:child_process");
   const serverPath = path.join(import.meta.dirname, "..", "mcp", "stats-server.mjs");
   if (!fs.existsSync(serverPath)) return { ok: false, detail: "mcp/stats-server.mjs missing" };
   return await new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(process.execPath, [serverPath], { stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, ZCODE_PLUGIN_ROOT: path.join(import.meta.dirname, "..") } });
-    } catch (e) {
-      return resolve({ ok: false, detail: `spawn failed: ${e?.message || e}` });
-    }
+    // spawnNodePiped, not a bare spawn: this helper re-asserts
+    // ELECTRON_RUN_AS_NODE and sets windowsHide, so the probe is safe when the
+    // doctor itself runs under ZCode's embedded Node (where a plain spawn would
+    // relaunch the GUI) and does not flash a console on Windows.
+    const child = spawnNodePiped(serverPath, [], { ZCODE_PLUGIN_ROOT: path.join(import.meta.dirname, "..") });
+    if (!child) return resolve({ ok: false, detail: "could not start the MCP server process" });
     let out = "";
     const done = (r) => { try { child.kill(); } catch {} resolve(r); };
     const timer = setTimeout(() => done({ ok: false, detail: "no reply to initialize within 5s — framing or startup problem" }), 5000);
