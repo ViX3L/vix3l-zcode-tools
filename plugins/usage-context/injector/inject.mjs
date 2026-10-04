@@ -131,7 +131,8 @@ const PAGE_JS = `
 (function () {
   // S.version is bumped when PAGE_JS changes materially; the document singleton
   // makes a re-injection REPLACE the running generation instead of orphaning it.
-  var VERSION = '7';
+  // 8: the Turn time panel's header no longer repeats its only row's figure.
+  var VERSION = '8';
   var EPOCH = Math.random().toString(36).slice(2, 10);
   var S = (window.__usageContext = window.__usageContext || { version: null, epoch: null, timer: null, handlers: null, hovering: null });
 
@@ -296,26 +297,39 @@ const PAGE_JS = `
     // clock chip (images 2 and 3), so the two are distinct panels, not one.
     var which = whichChip;
     if (!t) {
-      c.innerHTML = '<div class="uc-ch"><span class="uc-ct"><span class="uc-cico">' + (which === 'time' ? '\\u{23F1}' : '\\u{1F5C4}') + '</span> ' +
-        (which === 'time' ? 'Turn time and speed' : 'Turn usage') + '</span><span class="uc-cv">—</span></div>';
+      // Empty state: the usage card can show its "—" total in the header (that
+      // is the only place the total ever appears), but the time card's header
+      // carries no value — see below.
+      c.innerHTML = header(which, which === 'time' ? null : '—');
       return;
     }
     var model = t.model || '—';
     if (which === 'time') {
-      // Image 3: the time card carries a single "Total run time" row.
+      // The time card holds ONE figure, "Total run time", so the header shows
+      // only the title. Printing the duration in the header too would state the
+      // same number twice in a two-line card, which reads as a mistake.
       c.innerHTML =
-        '<div class="uc-ch"><span class="uc-ct"><span class="uc-cico">\\u{23F1}</span> Turn time and speed</span><span class="uc-cv">' + fmtDur(t.durationMs) + '</span></div>' +
+        header(which, null) +
         '<div class="uc-sep"></div>' +
         row('Total run time', fmtDur(t.durationMs));
       return;
     }
-    // Turn usage (image 2): header total, then the same rows the app shows.
+    // Turn usage (image 2): header total — the only place the total is shown —
+    // then the same rows the app shows.
     c.innerHTML =
-      '<div class="uc-ch"><span class="uc-ct"><span class="uc-cico">\\u{1F5C4}</span> Turn usage</span><span class="uc-cv">' + fmtTokExact(t.totalTokens) + '</span></div>' +
+      header(which, fmtTokExact(t.totalTokens)) +
       '<div class="uc-sep"></div>' +
       row('Provider / model', model) +
       row('Uncached input', fmtTokExact(t.uncachedTokens)) +
       row('Output', fmtTokExact(t.outputTokens));
+  }
+  // Card header. The value is optional: pass null to render the title alone
+  // (the time card), or a string to render the title with its right figure.
+  function header(which, value) {
+    var icon = which === 'time' ? '\\u{23F1}' : '\\u{1F5C4}';
+    var title = which === 'time' ? 'Turn time and speed' : 'Turn usage';
+    return '<div class="uc-ch"><span class="uc-ct"><span class="uc-cico">' + icon + '</span> ' + title + '</span>' +
+      (value == null ? '' : '<span class="uc-cv">' + value + '</span>') + '</div>';
   }
   function row(k, v) {
     return '<div class="uc-cr"><span class="uc-cd"></span><span class="uc-cl">' + k + '</span><span class="uc-cvv">' + v + '</span></div>';

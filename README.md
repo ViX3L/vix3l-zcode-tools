@@ -7,7 +7,7 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 | Plugin | What it shows | Version |
 |---|---|---|
 | **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.13 |
-| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.0 |
+| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.1 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
 
@@ -53,7 +53,7 @@ The inline composer pill appears when ZCode exposes a local debugging port — l
 
 ## Settings
 
-Open **Plugin Marketplace → Installed → (plugin) → Configure** to change a plugin's options; they are saved to your ZCode config and picked up without a restart.
+Open **Settings → Plugins → (plugin) → Advanced details → Configuration** to change a plugin's options, then click **Save configuration**; they are saved to your ZCode config and picked up without a restart.
 
 | Option | Plugin | Default | Meaning |
 |---|---|---|---|
