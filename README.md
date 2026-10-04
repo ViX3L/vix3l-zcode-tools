@@ -6,10 +6,28 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 
 | Plugin | What it shows | Version |
 |---|---|---|
-| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.12 |
+| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.13 |
 | **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.0 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
+
+## What it looks like
+
+**stats-composer** — the stats pill sits in the composer toolbar, right after the "+" button, and shows the latest request's rate and first-token latency:
+
+![The stats pill in the ZCode composer toolbar, reading 395.9 tok/s · 4203ms](assets/stats-composer-pill.png)
+
+Hovering the pill opens the **Session statistics** card: latest request and windowed averages, session time split, turn/step/tool-call counts, and the token and cache breakdown. The card ships in a roomy layout by default; a **compact** layout is one setting away (see below):
+
+| Wide (default) | Compact |
+|---|---|
+| ![The Session statistics hover card in its wide, roomy layout](assets/stats-composer-card-wide.png) | ![The Session statistics hover card in its compact layout](assets/stats-composer-card-compact.png) |
+
+**usage-context** — each assistant turn's footer carries two chips beside its timestamp, and hovering either one opens the turn's full accounting:
+
+![Per-turn Usage and Ran-for chips beside a turn timestamp](assets/usage-context-chips.png)
+
+![The Turn usage hover panel showing provider/model, uncached input and output](assets/usage-context-panel.png)
 
 ## Install
 
@@ -33,6 +51,24 @@ Working from a clone instead? Point **Add Plugin Marketplace** at the repository
 
 The inline composer pill appears when ZCode exposes a local debugging port — launch once with `zcode --remote-debugging-port=9229`, or use the launcher under `plugins/stats-composer/launcher/`. Without it, the plugins degrade gracefully to the dashboard, the CLI, and an appended stats line; every channel is documented in the plugin skill.
 
+## Settings
+
+Open **Plugin Marketplace → Installed → (plugin) → Configure** to change a plugin's options; they are saved to your ZCode config and picked up without a restart.
+
+| Option | Plugin | Default | Meaning |
+|---|---|---|---|
+| **Integration mode** | stats-composer | `auto` | `auto` = composer pill when debugging is available, otherwise an appended stats line; `skill` = appended line only; `sidecar` = background server only |
+| **Pill position** | stats-composer | `left` | `left` = beside the "+" button; `right` = next to the model selector |
+| **Wide session-statistics card** | stats-composer | on | On = the roomier hover card; off = the compact card |
+| **Live streaming rate** | stats-composer | on | Interpolate the last completed request's rate while the model is still streaming |
+| **Session window size** | stats-composer | `10` | How many recent requests to average |
+| **Sidecar port** | stats-composer | `7427` | HTTP port for the local stats server |
+| **Show per-turn chips** | usage-context | on | Render the chips at all |
+| **Show the "Ran for" chip** | usage-context | on | Also render the elapsed-time chip |
+| **stats-composer sidecar port** | usage-context | `7427` | Which stats-composer server to read |
+
+The card layout is also settable by hand: write `{"wideCard": false}` to `~/.zcode/stats-composer/config.json`. The marketplace setting takes precedence when it is set.
+
 ## Requirements
 
 - ZCode Desktop.
@@ -47,6 +83,7 @@ Everything runs locally. The stats server binds `127.0.0.1` only, the usage data
 
 ```
 marketplace.json        ← catalog ZCode reads when this repo is added by URL
+assets/                 ← screenshots used by this README
 plugins/
 ├── marketplace.json    ← catalog for local-directory installs
 ├── stats-composer/     ← plugin: per-request TPS/TTFT

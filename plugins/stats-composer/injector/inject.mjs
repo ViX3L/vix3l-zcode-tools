@@ -28,6 +28,15 @@ const RUN_DIR = path.join(os.homedir(), ".zcode", "stats-composer");
 const CONFIG_FILE = path.join(RUN_DIR, "config.json");
 const DEFAULT_SIDECAR = 7427;
 
+// The app's own settings store. The Plugin Marketplace settings page persists a
+// plugin's userConfig values here (plugins.options["<plugin>@<marketplace>"]),
+// and it is the channel that reaches a running plugin: hook descriptors carry
+// no env field, and ${user_config.*} expansion exists only for MCP servers. So
+// the injector reads the option from this file to honor a value changed from
+// the marketplace UI, and falls back to the plugin's own config.json (the
+// documented hand-edit route) when the app has not written one.
+const APP_CONFIG_FILE = path.join(os.homedir(), ".zcode", "cli", "config.json");
+
 const args = process.argv.slice(2);
 const argOf = (name, dflt) => {
   const i = args.indexOf(name);
@@ -43,6 +52,38 @@ function readConfig() {
   } catch {
     return {};
   }
+}
+
+// Read one userConfig value the app persisted for this plugin. Any marketplace
+// id ending in the plugin name is accepted, because the option key is
+// "<plugin>@<marketplace>" and the injector must not need to know which catalog
+// the user added (public or the local dev one).
+function appOption(key) {
+  let opts;
+  try {
+    opts = JSON.parse(fs.readFileSync(APP_CONFIG_FILE, "utf8"))?.plugins?.options;
+  } catch {
+    return undefined;
+  }
+  if (!opts || typeof opts !== "object") return undefined;
+  for (const id of Object.keys(opts)) {
+    if (id === "stats-composer" || id.startsWith("stats-composer@")) {
+      const v = opts[id]?.[key];
+      if (v !== undefined) return v;
+    }
+  }
+  return undefined;
+}
+
+// Card density, resolved marketplace-setting first, plugin config.json second,
+// so both routes work and either can override. wideCard defaults to true: the
+// roomier card is the intended default look.
+function cardLayout() {
+  const fromApp = appOption("wideCard");
+  if (typeof fromApp === "boolean") return fromApp ? "wide" : "compact";
+  const cfg = readConfig();
+  if (typeof cfg.wideCard === "boolean") return cfg.wideCard ? "wide" : "compact";
+  return "wide";
 }
 
 const log = (...a) => console.log("[stats-composer-injector]", ...a);
@@ -98,16 +139,24 @@ async function findTargets(port) {
 
 // Injection script. Runs inside the page; polls the sidecar over localhost
 // and renders into a closed-off shadow root so app styles never bleed in.
-//SIDECAR_PLACEHOLDER is replaced with the numeric sidecar port at launch.
-const PILL_JS = `
+//__SIDECAR_PORT__ is replaced with the numeric sidecar port at launch.
+//__CARD_LAYOUT__ is replaced with "wide" or "compact" from the userConfig option.
+const PILL_JS_TEMPLATE = `
 (function () {
-  // VERSION is bumped when PILL_JS changes materially; EPOCH is unique per
-  // run of this script. The app's React reconciliation copies DOM nodes
+  // VERSION is bumped when the injected script changes materially; EPOCH is
+  // unique per run of this script. The app's React reconciliation copies DOM
+  // nodes
   // without their JS expandos, so an expando is NOT a reliable ownership mark
   // (observed: the live node lost __owner while keeping our shadow root, which
   // made every poller treat it as foreign and rebuild it). Ownership is
   // therefore the document singleton, and the EPOCH is the generation id.
-  var VERSION = '37';
+  //
+  // The card density is part of the version identity: flipping the userConfig
+  // option must supersede the running generation so the new look applies live,
+  // instead of the idempotence check answering 'already' and leaving the old
+  // layout on screen until a reload.
+  var LAYOUT = '__CARD_LAYOUT__';
+  var VERSION = '38-' + LAYOUT;
   var EPOCH = Math.random().toString(36).slice(2, 10);
   // Document singleton: exactly one poller and one generation identity exist
   // per page, so a re-injection REPLACES the running generation instead of
@@ -337,11 +386,13 @@ const PILL_JS = `
       // bullet colour/shape, mono values and 60%-white labels are lifted from the
       // app's own "Context windows" hover card (read live off its computed
       // styles). Two things are deliberately ROOMIER than that panel, at the
-      // user's request: every row now carries a graded bullet opacity (see the
+      // user's request: every row carries a graded bullet opacity (see the
       // ladder below) instead of one pale default, and the row rhythm / card
-      // width / gutters are wider for legibility. Text metrics and anything that
-      // could clip are expressed in em/relative units so a font-size change
-      // rescales the card instead of overflowing it.
+      // width / gutters are wider for legibility. That roomier geometry is the
+      // DEFAULT (wideCard = true); the compact overrides at the end of this
+      // sheet restore the earlier, denser geometry for users who prefer it.
+      // Text metrics and anything that could clip are expressed in em/relative
+      // units so a font-size change rescales the card instead of overflowing it.
       '.cardp { position: fixed; z-index: 2147483000; display: none; min-width: 30em;',
       ' background: #2b2b2b; border: 1px solid rgba(255,255,255,.1); border-radius: 12px;',
       ' padding: 14px 16px; overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.45);',
@@ -392,12 +443,26 @@ const PILL_JS = `
       ' margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); }',
       '.cardp .cfoot .cl { flex: 1; min-width: 0; color: rgba(248,248,248,.6); }',
       '.cardp .cfoot .cv { color: #f8f8f8; }',
+      // Compact density (the userConfig option wideCard = false). This is the
+      // pre-option geometry: the same card, the same graded bullets, just
+      // tighter — smaller card width, gutters and row rhythm, matching the app's
+      // own hover panel more closely. Only geometry differs, so the compact and
+      // wide cards can never disagree on content.
+      '.cardp.compact { min-width: 24em; padding: 12px; }',
+      '.cardp.compact .ch { margin-bottom: 12px; }',
+      '.cardp.compact .cdiv { margin: 10px 0; }',
+      '.cardp.compact .cdivv { margin: 0 12px; }',
+      '.cardp.compact .cr { gap: 8px; min-height: 1.6em; }',
+      '.cardp.compact .crows { gap: 6px; }',
+      '.cardp.compact .cfoot { margin-top: 12px; padding-top: 12px; }',
     ].join('');
     const pill = document.createElement('div');
     pill.className = 'pill idle';
     pill.innerHTML = PILL_SKELETON;
     const cardEl = document.createElement('div');
-    cardEl.className = 'cardp';
+    // Density is a class on the card, so the wide/compact difference is pure
+    // CSS: the content, values and behaviour are identical either way.
+    cardEl.className = LAYOUT === 'compact' ? 'cardp compact' : 'cardp';
     cardEl.innerHTML = CARD_SKELETON;
     host.shadowRoot.appendChild(style);
     host.shadowRoot.appendChild(pill);
@@ -755,6 +820,13 @@ const PILL_JS = `
 })();
 `.replace(/__SIDECAR_PORT__/g, String(SIDECAR_PORT));
 
+// Materialize PILL_JS for one density. The layout is baked into the script (and
+// therefore into VERSION), so changing it produces a *different* script that
+// supersedes the running generation instead of being dismissed as 'already'.
+function pillJs(layout) {
+  return PILL_JS_TEMPLATE.replace(/__CARD_LAYOUT__/g, layout);
+}
+
 // A page target's own webSocketDebuggerUrl admits exactly ONE debugger
 // client. The sidecar keeps a long-lived injector attached, so a second
 // client (a manual `--once` run, the doctor, a re-sweep after a socket
@@ -790,7 +862,7 @@ function makeTimed(ws) {
     ]);
 }
 
-async function injectIntoTarget(ws, target, timed) {
+async function injectIntoTarget(ws, target, timed, script) {
   // Attach, evaluate in the page, then detach so the target is left free for
   // other tooling (devtools, the doctor) as soon as this sweep ends.
   const attach = await timed("Target.attachToTarget", { targetId: target.id, flatten: true }, null, 8000);
@@ -825,7 +897,7 @@ async function injectIntoTarget(ws, target, timed) {
     }
     const res = await timed(
       "Runtime.evaluate",
-      { expression: PILL_JS, returnByValue: true, awaitPromise: true },
+      { expression: script, returnByValue: true, awaitPromise: true },
       sessionId,
       30000
     );
@@ -927,11 +999,19 @@ async function main() {
     return;
   }
   const timed = makeTimed(ws);
+  // Resolve the density fresh on EVERY sweep: the app writes a settings change
+  // to its config file, and re-reading it here is what makes the choice apply
+  // within one sweep interval without restarting anything. Because the layout is
+  // part of the injected script's VERSION, a changed value re-injects and
+  // supersedes the running generation, so the card changes appearance live.
+  const layout = cardLayout();
+  const script = pillJs(layout);
+  log(`card layout: ${layout}`);
   let okCount = 0;
   try {
     for (const t of targets) {
       try {
-        if (await injectIntoTarget(ws, t, timed)) okCount++;
+        if (await injectIntoTarget(ws, t, timed, script)) okCount++;
       } catch (e) {
         log("inject failed:", t.url?.slice(0, 60), String(e.message || e));
       }

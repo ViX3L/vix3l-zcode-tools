@@ -12,9 +12,24 @@ Two numbers, per model request, for **every provider** (the data is written by Z
 
 ## Where the user sees stats
 
-1. **Composer pill** (integration mode) — an injected pill in the composer toolbar next to the "+" button. Requires the app to expose a CDP port (start once with `--remote-debugging-port=9229`).
+1. **Composer pill** (integration mode) — an injected pill in the composer toolbar next to the "+" button. Requires the app to expose a CDP port (start once with `--remote-debugging-port=9229`). Hovering it opens the **Session statistics** card, which has two densities (see Settings).
 2. **Sidecar + dashboard** — `http://127.0.0.1:7427/dashboard` (auto-started; port file `~/.zcode/stats-composer/port`).
 3. **Assistant-attached line** (fallback) — this skill, when no pill/dashboard is active.
+
+## Settings (`userConfig`)
+
+Set from **Plugin Marketplace → Installed → Session Statistics (TPS/TTFT) → Configure**, or by hand in `~/.zcode/stats-composer/config.json`. The marketplace value wins when both are set.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `mode` | `auto` | `auto` = pill if CDP is available, else attached line; `skill` = attached line only; `sidecar` = server only |
+| `position` | `left` | Pill position: `left` next to the "+" button, `right` near the model selector |
+| `wideCard` | `true` | Hover-card density: `true` = roomier (30em, wider gutters), `false` = compact (24em) |
+| `live` | `true` | Interpolate the last completed rate while streaming |
+| `window` | `10` | Requests averaged for the windowed rate |
+| `port` | `7427` | Sidecar HTTP port |
+
+Changing `wideCard` or `position` re-injects within one sweep (~10 s) — no restart. The injector reads the app's settings store at `~/.zcode/cli/config.json` (`plugins.options["stats-composer@<marketplace>"]`) because that is the only channel that reaches a running plugin: hook descriptors carry no env field, and `${user_config.*}` expansion exists only for MCP servers. The plugin's own `config.json` is the fallback.
 
 ## Taking numbers (read-only, never blocks the app)
 
