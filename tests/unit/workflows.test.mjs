@@ -14,7 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { CI_WORKFLOW, RELEASE_WORKFLOW, RELEASE_PLAN, PACKAGE_PLUGIN_SH, GITHUB_DIR, REPO_ROOT } from "../lib/paths.mjs";
+import { CI_WORKFLOW, RELEASE_WORKFLOW, RELEASE_PLAN, PACKAGE_PLUGIN_SH, GITHUB_DIR, REPO_ROOT, STATS } from "../lib/paths.mjs";
 
 const read = (p) => fs.readFileSync(p, "utf8");
 
@@ -57,14 +57,43 @@ test("the scripts the workflows call exist and are runnable", () => {
   assert.ok(fs.existsSync(PACKAGE_PLUGIN_SH), "package-plugin.sh is missing");
   // package-plugin.sh must be executable: the workflow invokes it with `bash`,
   // but a human runs it directly, and a script that is not +x is a papercut.
-  const mode = fs.statSync(PACKAGE_PLUGIN_SH).mode;
-  assert.ok(mode & 0o111, "package-plugin.sh must be executable");
+  //
+  // The failure message names the git cause on purpose. This repo has
+  // core.fileMode=false, so `chmod +x` on a working file is NOT recorded by
+  // `git add` — the bit has to be set in the index explicitly
+  // (`git update-index --chmod=+x <file>`). Locally the file looks executable
+  // while a fresh CI checkout is not, which is exactly how this test first went
+  // red on a runner but green on the author's machine.
+  assert.ok(
+    fs.statSync(PACKAGE_PLUGIN_SH).mode & 0o111,
+    "package-plugin.sh must be executable. If it looks +x here but CI fails, the bit is not in git: " +
+      "this repo has core.fileMode=false, so run `git update-index --chmod=+x .github/scripts/package-plugin.sh`."
+  );
   // The workflows must reference exactly the paths that exist, so a rename
   // breaks this test rather than a release.
   const rel = path.relative(REPO_ROOT, RELEASE_PLAN);
   assert.ok(read(RELEASE_WORKFLOW).includes(rel), `release.yml must invoke ${rel}`);
   const shRel = path.relative(REPO_ROOT, PACKAGE_PLUGIN_SH);
   assert.ok(read(RELEASE_WORKFLOW).includes(shRel), `release.yml must invoke ${shRel}`);
+});
+
+test("the launcher script a desktop entry Exec= runs is executable", () => {
+  // zcode-stats.sh is the target of the Linux .desktop file's Exec= line, which
+  // the desktop environment runs directly — a non-executable one silently does
+  // nothing when launched from the app menu. Same core.fileMode=false caveat as
+  // package-plugin.sh above: the bit must be recorded in the index.
+  const launcher = path.join(STATS, "launcher", "zcode-stats.sh");
+  assert.ok(fs.existsSync(launcher), "the Linux launcher is missing");
+  assert.equal(fs.readFileSync(launcher, "utf8").split("\n")[0], "#!/bin/sh", "the launcher must carry a shebang");
+  assert.ok(
+    fs.statSync(launcher).mode & 0o111,
+    "plugins/stats-composer/launcher/zcode-stats.sh must be executable (its .desktop Exec= runs it directly); " +
+      "if it looks +x locally but CI fails, the bit is not in git — run `git update-index --chmod=+x` on it."
+  );
+  // The desktop entry must actually point at that file name, so a rename cannot
+  // leave the launcher unreachable from the app menu.
+  const desktop = fs.readFileSync(path.join(STATS, "launcher", "zcode-stats.desktop"), "utf8");
+  assert.match(desktop, /Exec=.*zcode-stats\.sh/, "the .desktop Exec= must name zcode-stats.sh");
 });
 
 test("the release workflow uploads the three archive kinds per plugin", () => {

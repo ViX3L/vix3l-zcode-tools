@@ -61,8 +61,12 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Run tests
         run: |
+          # `set +e` so a failing run is printed below rather than aborting the
+          # step (Actions' `bash -e`) with the failure only in the log's absence.
+          set +e
           docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:release > test-output.txt 2>&1
           status=$?
+          set -e
           cat test-output.txt
           exit $status
 

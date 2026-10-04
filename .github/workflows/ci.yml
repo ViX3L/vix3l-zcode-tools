@@ -68,10 +68,19 @@ jobs:
       #
       # TAP output is captured and printed, so a failing test's full assertion
       # appears in the log a maintainer reads.
+      #
+      # `set +e` around the docker call is load-bearing: Actions runs a `run:`
+      # block under `bash -e`, so a failing `docker run` would abort the step
+      # BEFORE the `cat`, leaving "Error: Process completed with exit code 1."
+      # as the only thing in the log and the real failure readable only by
+      # downloading the artifact. Capturing the status without tripping `-e`
+      # is what keeps the failure in the log where it is needed.
       - name: Run tests
         run: |
+          set +e
           docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:ci > test-output.txt 2>&1
           status=$?
+          set -e
           cat test-output.txt
           exit $status
 
