@@ -342,46 +342,72 @@ try {
   body { font: 14px/1.6 -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
          background: var(--bg); color: var(--fg); margin: 0; padding: 24px;
          transition: background .15s linear, color .15s linear; }
-  h1 { font-size: 18px; margin: 0 0 4px; }
+  h1 { font-size: 18px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  h1 .logo { flex: 0 0 auto; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
   .bar { display: flex; align-items: center; gap: 10px; max-width: 1100px; margin-bottom: 14px; flex-wrap: wrap; }
   .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
            border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; color: var(--muted); }
-  .badge button { background: none; border: 0; color: var(--fg); cursor: pointer;
-                  font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 0; }
+  /* Buttons carry a real hit area: the visible pill is 12px of text, so a
+     pseudo-element extends the target to ~40px without changing the layout —
+     below that, pointer accuracy suffers on the small "refresh" and theme
+     controls. Press feedback is a 0.96 scale, and only transform+color
+     transition (never "all") so nothing else animates by accident. */
+  .badge button { position: relative; background: none; border: 0; color: var(--fg); cursor: pointer;
+                  font: inherit; display: inline-flex; align-items: center; gap: 6px; padding: 0;
+                  transition: color .15s ease-out, transform .12s cubic-bezier(0.16,1,0.3,1); }
+  .badge button::after { content: ""; position: absolute; inset: -12px -8px; }
   .badge button:hover { color: var(--fg-hi); }
+  .badge button:active { transform: scale(0.96); }
+  .badge:has(button:focus-visible) { border-color: var(--border-hi); }
+  .badge button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
   .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
   .badge.off .dot { background: var(--muted); }
   .spin { animation: rot 0.9s linear infinite; }
   @keyframes rot { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .badge button, .donutwrap svg circle, body { transition: none; }
+    .spin { animation: none; }
+  }
   /* Top region: the headline cards on the left, the model split on the right.
      Explicit two columns rather than auto-fit — the right half of this row was
      empty before (four auto-fit cards never reached it), and the model mix is
      the natural thing to put there. Collapses to one column on narrow windows. */
-  .top { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(290px, 1fr);
+  .top { display: grid; grid-template-columns: minmax(0, 1.28fr) minmax(300px, 1fr);
          gap: 14px; max-width: 1100px; align-items: stretch; }
   .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
   .card .k { color: var(--muted); font-size: 12px; }
   .card .v { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
   .card .n { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  /* Model-mix panel (donut + legend). It fills its grid cell at any height, so
-     it lines up with the 2×2 card block beside it instead of floating short. */
+  /* Model-mix panel (donut + legend). The donut sits on its own row with the
+     figures BELOW it rather than inside the ring: at any usable ring size a
+     six-character number and an eleven-character caption are wider than the
+     hole, so a centered overlay crowds the stroke and reads as overlap. Below
+     the ring there is room at every size, and the ring keeps the full 152px.
+     The ring group centers in the space left over; the legend pins to the
+     bottom, so the panel fills its grid cell without a dead gap. */
   .model { display: flex; flex-direction: column; }
-  .donutrow { display: flex; align-items: center; gap: 16px; margin-top: 8px; flex: 1; min-height: 0; }
-  .donutwrap { position: relative; flex: 0 0 auto; width: 138px; height: 138px; }
+  .mixbody { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; flex: 1; min-height: 0; }
+  .donutarea { flex: 1 1 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; }
+  .donutwrap { position: relative; flex: 0 0 auto; width: 152px; height: 152px; }
   .donutwrap svg { display: block; width: 100%; height: 100%; }
-  .donutwrap .center { position: absolute; inset: 0; display: flex; flex-direction: column;
-                       align-items: center; justify-content: center; text-align: center; pointer-events: none; }
-  .donutwrap .center .big { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; }
-  .donutwrap .center .cap { font-size: 10px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
-  .legend { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
-  .lrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: baseline;
-          gap: 8px; font-size: 12.5px; }
-  .lrow .sw { width: 10px; height: 10px; border-radius: 3px; align-self: center; }
-  .lrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lrow .nm .pc { color: var(--muted); font-size: 11px; }
-  .lrow .tk { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .donutwrap svg circle { transition: stroke-dasharray .35s cubic-bezier(0.16,1,0.3,1),
+                                      stroke-dashoffset .35s cubic-bezier(0.16,1,0.3,1); }
+  .dcenter { text-align: center; margin-top: 8px; }
+  .dcenter .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .dcenter .big:empty { display: none; }
+  .dcenter .cap { font-size: 10.5px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; margin-top: 1px; }
+  /* Legend: one row per model. A grid so swatch / name / percent line up as
+     columns down the list. Each row's swatch is its slice's colour, so the
+     list is the ring's key without needing a second encoding. */
+  .legend { flex: 0 0 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px;
+            border-top: 1px solid var(--border); padding-top: 12px; }
+  .lrow { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 9px; font-size: 12.5px; }
+  .lrow .sw { width: 10px; height: 10px; border-radius: 3px; }
+  .lrow .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .lrow .tk { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .lrow .pc { font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table { border-collapse: collapse; margin-top: 22px; max-width: 1100px; width: 100%; font-variant-numeric: tabular-nums; }
   th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
   th { color: var(--muted); font-weight: 500; cursor: pointer; user-select: none; white-space: nowrap; }
@@ -393,17 +419,21 @@ try {
   .pager { display: flex; align-items: center; gap: 10px; max-width: 1100px;
            margin-top: 12px; color: var(--muted); font-size: 12px; }
   .pager button { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-                  color: var(--fg); cursor: pointer; font: inherit; padding: 4px 12px; }
+                  color: var(--fg); cursor: pointer; font: inherit; padding: 5px 12px; min-height: 30px;
+                  transition: border-color .15s ease-out, color .15s ease-out, transform .12s cubic-bezier(0.16,1,0.3,1); }
   .pager button:hover:not(:disabled) { border-color: var(--border-hi); color: var(--fg-hi); }
+  .pager button:active:not(:disabled) { transform: scale(0.96); }
+  .pager button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .pager button:disabled { opacity: .4; cursor: default; }
   .pager .pg { font-variant-numeric: tabular-nums; }
+  th:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .ok { color: var(--ok); } .err { color: var(--err); } .cxl { color: var(--cxl); }
   @media (max-width: 860px) {
     .top { grid-template-columns: minmax(0, 1fr); }
     .cards { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
   }
 </style></head><body>
-<h1>⚡ Session statistics</h1>
+<h1><svg class="logo" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M13 2 4.5 13.2h6L11 22l8.5-11.2h-6z" fill="var(--accent)"/></svg> Session statistics</h1>
 <div class="sub">ZCode · stats-composer · read-only on the usage DB, cannot affect the running client · newest request first · click a column header to toggle its sort</div>
 <div class="bar">
   <span class="badge" id="refreshBadge">
@@ -419,10 +449,12 @@ try {
   <div class="cards" id="cards"></div>
   <div class="card model" id="modelCard">
     <div class="k" id="modelTitle">Model mix</div>
-    <div class="donutrow">
-      <div class="donutwrap" id="donutwrap">
-        <svg id="donut" viewBox="0 0 42 42" role="img" aria-label="Share of generated tokens by model"></svg>
-        <div class="center"><div class="big" id="donutPct">—</div><div class="cap" id="donutCap">session</div></div>
+    <div class="mixbody">
+      <div class="donutarea">
+        <div class="donutwrap" id="donutwrap">
+          <svg id="donut" viewBox="0 0 42 42" role="img" aria-label="Share of generated tokens by model"></svg>
+        </div>
+        <div class="dcenter"><div class="big" id="donutPct">—</div><div class="cap" id="donutCap">generated tokens</div></div>
       </div>
       <div class="legend" id="legend"></div>
     </div>
@@ -467,7 +499,9 @@ function dur(v){ return v==null?'—':(v>=60000?(v/60000).toFixed(1)+'m':ms(v));
 function tokN(v){ if(v==null) return '—'; if(v>=1e6) return (v/1e6).toFixed(2)+'M'; if(v>=1e3) return (v/1e3).toFixed(1)+'k'; return String(v); }
 // ---- model mix (donut + legend) ----
 // Palette chosen to stay distinguishable on both themes and to not rely on
-// green/red (those carry status meaning elsewhere on this page).
+// green/red (those carry status meaning elsewhere on this page). The first
+// colour is the page accent, so a single-model session reads as "the" accent
+// rather than one arbitrary hue from a list.
 const PALETTE = ['#60a5fa','#a78bfa','#f472b6','#fb923c','#facc15','#34d399','#22d3ee','#f87171','#c084fc','#4ade80'];
 function renderModels(models){
   const svg = document.getElementById('donut'), legend = document.getElementById('legend');
@@ -476,8 +510,11 @@ function renderModels(models){
   const totalGen = list.reduce((s,m) => s + (m.generated||0), 0);
   const R = 15.9155; // r such that circumference == 100, so a share IS a dash length
   if (!list.length){
+    // Empty: the ring is the placeholder. The legend carries the one sentence
+    // that says why it is empty, so the caption is cleared rather than saying
+    // the same thing twice.
     svg.innerHTML = '<circle cx="21" cy="21" r="'+R+'" fill="none" stroke="var(--track)" stroke-width="6"></circle>';
-    big.textContent = '—'; cap.textContent = 'no data';
+    big.textContent = '—'; cap.textContent = '';
     legend.innerHTML = '<div class="lrow" style="grid-template-columns:1fr"><span class="nm" style="color:var(--muted)">No completed requests yet</span></div>';
     return;
   }
@@ -494,15 +531,20 @@ function renderModels(models){
     acc += share;
   });
   svg.innerHTML = '<g transform="rotate(-90 21 21)">' + rings + '</g>';
-  big.textContent = tokN(totalGen);
-  cap.textContent = 'generated tok';
+  // Centre figure: the total when a single model did all the work (a lone
+  // "100%" says nothing), otherwise the leading model's share and name — the
+  // "which model dominates?" answer a reader wants at a glance.
+  const top = list[0];
+  const topShare = totalGen > 0 ? (top.generated / totalGen) * 100 : 0;
+  if (list.length === 1){ big.textContent = tokN(totalGen); cap.textContent = 'generated tokens'; }
+  else { big.textContent = topShare.toFixed(0) + '%'; cap.textContent = (top.model||'').split('/').pop(); }
   legend.innerHTML = list.map((m, i) => {
     const share = totalGen > 0 ? (m.generated / totalGen) * 100 : 0;
     const name = m.model || '(unknown)';
-    return '<div class="lrow" title="'+(name)+' · '+m.requests+' requests · avg '+((m.avgTps==null)?'—':m.avgTps)+' tok/s">' +
+    return '<div class="lrow" title="'+name+' · '+m.requests+' requests · avg '+((m.avgTps==null)?'—':m.avgTps)+' tok/s">' +
       '<span class="sw" style="background:'+PALETTE[i % PALETTE.length]+'"></span>' +
-      '<span class="nm">'+name+' <span class="pc">'+tokN(m.generated)+' tok · '+m.requests+' req</span></span>' +
-      '<span class="tk">'+share.toFixed(1)+'%</span></div>';
+      '<span class="nm">'+name+' <span class="tk">'+tokN(m.generated)+' tok · '+m.requests+' req</span></span>' +
+      '<span class="pc">'+share.toFixed(1)+'%</span></div>';
   }).join('');
 }
 // ---- per-request table ----

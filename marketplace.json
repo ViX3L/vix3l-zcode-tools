@@ -6,7 +6,7 @@
     {
       "name": "stats-composer",
       "source": "./plugins/stats-composer",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "description": "Per-request TPS (tok/s) and TTFT stats in the composer toolbar, next to the + button; works with all providers including custom endpoints. The session-statistics hover card can be wide (default) or compact, chosen from the plugin settings.",
       "displayName": "Session Statistics (TPS/TTFT)",
       "icon": "https://raw.githubusercontent.com/ViX3L/vix3l-zcode-tools/main/plugins/stats-composer/icon.svg",
