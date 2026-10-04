@@ -97,6 +97,15 @@ docker compose -f tests/docker/compose.yml run --rm tests \
   node --test --test-concurrency=1 "tests/ui/**/*.test.mjs"
 ```
 
+The run uses the image's baked copy of the repository and writes nothing to your
+working tree, so no `node_modules` or browser install is needed on the host. To
+test an edit, rebuild first (the source `COPY` layer is the only one that
+invalidates, so it takes a second or two):
+
+```sh
+docker compose -f tests/docker/compose.yml run --rm --build tests
+```
+
 The tiers, and what each one actually proves:
 
 | Tier | What it covers |
@@ -147,4 +156,4 @@ repository About copy.
 
 ## License
 
-MIT — declared in each plugin's `plugin.json`.
+MIT — see [LICENSE](LICENSE). Also declared in each plugin's `plugin.json`.

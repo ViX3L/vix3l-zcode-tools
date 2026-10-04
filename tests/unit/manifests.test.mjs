@@ -199,6 +199,25 @@ test("the two runtime.mjs copies are identical", () => {
   assert.equal(a, b, "the two plugins' runtime.mjs have drifted apart");
 });
 
+test("the license is MIT in every declaration and a LICENSE file exists", () => {
+  // The README, the package.json and both plugin manifests claim MIT; a
+  // repository that declares a license without shipping the text of it is a
+  // papercut for anyone who wants to reuse the code. So the three declarations
+  // are asserted to agree AND the LICENSE file is asserted to exist and hold the
+  // standard MIT grant.
+  const licensePath = path.join(REPO_ROOT, "LICENSE");
+  assert.ok(fs.existsSync(licensePath), "the repository must ship a LICENSE file");
+  const text = fs.readFileSync(licensePath, "utf8");
+  assert.match(text, /^MIT License/m, "LICENSE must be the MIT license");
+  assert.match(text, /Permission is hereby granted, free of charge/, "LICENSE must carry the MIT grant");
+  assert.match(text, /WITHOUT WARRANTY OF ANY KIND/, "LICENSE must carry the MIT warranty disclaimer");
+  assert.ok(/Copyright \(c\) \d{4}/.test(text), "LICENSE must name a copyright holder and year");
+  // Every place a license is declared must say MIT, matching the file.
+  assert.equal(readJson(path.join(REPO_ROOT, "package.json")).license, "MIT");
+  assert.equal(statsPkg.license, "MIT");
+  assert.equal(usagePkg.license, "MIT");
+});
+
 test("the documented test commands and the container's agree", () => {
   // The README tells a user to run the suite with a quoted glob, and the
   // container's entrypoint does the same. If either drifts (a bare directory

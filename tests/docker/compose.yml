@@ -9,10 +9,14 @@
 #   docker compose -f tests/docker/compose.yml run --rm tests \
 #     node --test --test-concurrency=1 "tests/unit/**/*.test.mjs"
 #
-# The image is built on first use and cached afterwards; rebuild after changing
-# package.json or the Dockerfile with:
+# A local run uses the image's baked copy of the repo, so it writes nothing to
+# your working tree. To test an edit, rebuild (the COPY layer is the only one
+# that invalidates, so it takes a second or two):
 #
-#   docker compose -f tests/docker/compose.yml build
+#   docker compose -f tests/docker/compose.yml run --rm --build tests
+#
+# The image is built on first use and cached afterwards; rebuild it on its own
+# with `docker compose -f tests/docker/compose.yml build`.
 services:
   tests:
     build:
@@ -25,13 +29,22 @@ services:
     # network egress beyond the npm/browser install already baked into the image.
     init: true
     working_dir: /app
-    # The source is baked into the image, so a run is reproducible from a tag
-    # alone. These volumes keep the checkout in sync for local iteration: the
-    # image's copy is what CI validates, the mount makes local edits visible.
-    volumes:
-      - ../../:/app
-      - /app/node_modules
-      - /ms-playwright
+    # NO bind mount and NO volumes: the image COPYs the checkout at build time
+    # and carries its own node_modules and browser build, so a run uses the
+    # baked copy and writes NOTHING to your working tree. That is deliberate:
+    #
+    #   * a bind mount of the repo would shadow the image's node_modules and
+    #     browser, and would make a local run test your host files while CI
+    #     tests the baked ones — two different subjects;
+    #   * shadowing node_modules with a volume recreates an empty node_modules/
+    #     directory in the checkout as a side effect of every run, and a
+    #     persistent volume then goes stale after a dependency change.
+    #
+    # So a local run and a CI run are the same subject and the same command.
+    # To pick up an edit, rebuild — the COPY layer is the only one that
+    # invalidates, so it is a second or two:
+    #
+    #   docker compose -f tests/docker/compose.yml run --rm --build tests
     environment:
       NODE_NO_WARNINGS: "1"
     # The quoted glob is expanded by the test runner itself; a bare directory

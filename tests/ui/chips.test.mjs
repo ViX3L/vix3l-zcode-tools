@@ -461,6 +461,11 @@ test("a superseding generation sweeps the previous generation's nodes instead of
   await install(page, { script, css });
   await settled(page);
   await hover(page, ".uc-usage"); // creates the card host, as a real session would
+  // Park the pointer OFF the chips before re-injecting. If it stayed over the
+  // rebuilt chip, Chromium would re-run hit testing as the new node appears
+  // under a stationary pointer and fire pointerover — legitimately reopening the
+  // card — which would make "the stale host was swept" unobservable here.
+  await moveAway(page);
   await page.evaluate(() => {
     // Plant a previous generation's leftovers: a chip wrap and a card host.
     const stale = document.createElement("span");

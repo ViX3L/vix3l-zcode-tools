@@ -19,6 +19,10 @@ docker compose -f tests/docker/compose.yml run --rm tests \
   node --test --test-concurrency=1 "tests/unit/**/*.test.mjs"
 ```
 
+The run uses the image's baked copy of the repository and `node_modules`, so it
+writes nothing to your working tree and needs no host `node_modules`. To test an
+edit, rebuild first: `run --rm --build tests`.
+
 If you already have Node ≥ 22.5 and a Chromium for Playwright, the same suite
 runs directly, via `package.json` scripts: `npm test`, `npm run test:unit`,
 `test:integration`, `test:ui`, `test:e2e`.
