@@ -1,0 +1,117 @@
+# Continuous integration for vix3l-zcode-tools.
+#
+# The suite is intentionally run INSIDE the same container a developer uses
+# locally (tests/docker), rather than on the runner's Node/Chromium. Two
+# reasons: the UI tiers drive a real Chromium with real fonts, so the browser
+# build and font packages must be pinned (the image does that); and "it passed
+# on the runner but not on my machine" is exactly the class of failure a
+# container removes. So CI does not install Node or a browser — it builds the
+# image and runs the suite in it, which is the same command from the README.
+#
+# Jobs:
+#   test     — build the image and run every tier (unit, integration, ui, e2e)
+#   package  — on a version tag, build a per-plugin archive and attach it to the
+#              GitHub Release (see .github/workflows/release.yml for the release
+#              itself; this job only proves packaging works on every push)
+name: CI
+
+on:
+  # Branch pushes and PRs only. Defining `branches` and nothing for `tags`
+  # means a tag push does NOT trigger this workflow (GitHub skips the undefined
+  # ref), which is what lets release.yml own tags without a duplicate run.
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch cancels an in-flight run: the newest code is the
+# only one worth testing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test suite (container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build the image from the Dockerfile in the repo, so the CI environment
+      # is defined by version control and nothing else. Buildx with the GitHub
+      # cache keeps rebuilds cheap after the first run.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tests/docker/Dockerfile
+          tags: vix3l-zcode-tools-tests:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Run the image's own entrypoint (the full test glob). No source volume is
+      # mounted: the image already COPYs the checkout at build time, and running
+      # against that baked copy is what makes a run reproducible from the image
+      # alone — and avoids shadowing the image's node_modules (which holds the
+      # one dev dependency, Playwright) with the runner's empty directory.
+      #
+      # The container needs the same shared-memory bump the compose file uses,
+      # or Chromium crashes mid-run on a large page.
+      #
+      # TAP output is captured and printed, so a failing test's full assertion
+      # appears in the log a maintainer reads.
+      - name: Run tests
+        run: |
+          docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:ci > test-output.txt 2>&1
+          status=$?
+          cat test-output.txt
+          exit $status
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.txt
+          if-no-files-found: warn
+
+  versions:
+    name: Version declarations agree
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The three places a plugin's version lives (its .zcode-plugin/plugin.json,
+      # its entry in the root marketplace.json, and its entry in the dev
+      # marketplace.json under plugins/) must agree, or an install resolves a
+      # different version than the repo advertises. The test suite asserts this
+      # too; running it as a separate, dependency-free job makes the failure
+      # legible on its own.
+      - name: Check
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const read = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
+          const root = read('marketplace.json');
+          const dev = read('plugins/marketplace.json');
+          const plugins = ['stats-composer', 'usage-context'];
+          let bad = 0;
+          for (const name of plugins) {
+            const manifest = read(`plugins/${name}/.zcode-plugin/plugin.json`);
+            const inRoot = (root.plugins || []).find((p) => p.name === name);
+            const inDev = (dev.plugins || []).find((p) => p.name === name);
+            const versions = { manifest: manifest.version, rootMarketplace: inRoot?.version, devMarketplace: inDev?.version };
+            const uniq = new Set(Object.values(versions));
+            const ok = uniq.size === 1 && versions.manifest;
+            console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}: ${JSON.stringify(versions)}`);
+            if (!ok) bad++;
+          }
+          if (bad) process.exit(1);
+          EOF

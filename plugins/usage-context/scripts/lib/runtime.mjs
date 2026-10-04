@@ -80,6 +80,26 @@ export function spawnAttachedNode(scriptPath, args, extraEnv) {
   }
 }
 
+// Launch a Node script whose OUTPUT the caller needs to read (the doctor's MCP
+// handshake probe). Same executable and env handling as the others — including
+// the ELECTRON_RUN_AS_NODE re-assertion, which matters here: the doctor may run
+// under ZCode's embedded Node, where process.execPath is the GUI app binary, so
+// a plain spawn would relaunch the GUI instead of running the script. stdout is
+// piped; stderr is discarded (the sqlite experimental warning would otherwise
+// interleave with the protocol).
+export function spawnNodePiped(scriptPath, args, extraEnv) {
+  try {
+    return spawn(nodeExecutable(), [scriptPath, ...(args || [])], {
+      detached: false,
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
+      env: childEnv(extraEnv),
+    });
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Locating the ZCode installation
 // ---------------------------------------------------------------------------

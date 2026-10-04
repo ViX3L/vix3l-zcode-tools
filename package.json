@@ -1,0 +1,24 @@
+{
+  "name": "vix3l-zcode-tools",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Test harness for the ViX3L ZCode Tools plugin marketplace. The plugins themselves are plain Node ESM with no runtime dependencies; everything here is test-only.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.mjs\"",
+    "test:unit": "node --test \"tests/unit/**/*.test.mjs\"",
+    "test:integration": "node --test --test-concurrency=1 \"tests/integration/**/*.test.mjs\"",
+    "test:ui": "node --test --test-concurrency=1 \"tests/ui/**/*.test.mjs\"",
+    "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/**/*.test.mjs\"",
+    "test:docker": "docker compose -f tests/docker/compose.yml run --rm tests",
+    "test:docker:build": "docker compose -f tests/docker/compose.yml build",
+    "test:browser:install": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

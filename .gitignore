@@ -6,6 +6,17 @@ docs
 AGENTS.md
 llm-wiki.md
 .kilo
+.zcode
+.hermes
+.commandcode
+.agents
+.roo
+skills-lock.json 
+node_modules
+
+# release/packaging output (written by .github/scripts/package-plugin.sh and the
+# release tooling tests; never committed — the release workflow builds it fresh)
+dist/
 
 # ZCode client's local file-search config (machine-specific)
 .zcodeignore

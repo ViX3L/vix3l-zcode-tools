@@ -70,8 +70,24 @@ const ok = (id, result) => writeMessage({ jsonrpc: "2.0", id, result });
 const fail = (id, code, message) =>
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
+// The usage DB is created by ZCode the first time a message is sent, so "the DB
+// file does not exist yet" and "there is no session yet" are the same, ordinary
+// situation on a fresh install. Open once, here, and turn that case into the
+// tool's own sentence instead of letting a raw sqlite error ("unable to open
+// database file") reach the user through a tool result.
+function openDbOrNull() {
+  try {
+    if (!metrics.dbExists()) return null;
+    return new DatabaseSync(metrics.DB_PATH, { readOnly: true });
+  } catch {
+    return null;
+  }
+}
+const NO_DB = { content: [{ type: "text", text: "no session yet — ZCode creates its usage database with the first message" }] };
+
 function toolRequestStats(args) {
-  const db = new DatabaseSync(metrics.DB_PATH, { readOnly: true });
+  const db = openDbOrNull();
+  if (!db) return NO_DB;
   try {
     const sid = metrics.resolveSession(args?.session_id || null);
     if (!sid) return { content: [{ type: "text", text: "no session yet" }] };
@@ -94,7 +110,8 @@ function toolRequestStats(args) {
 }
 
 function toolHistoryStats(args) {
-  const db = new DatabaseSync(metrics.DB_PATH, { readOnly: true });
+  const db = openDbOrNull();
+  if (!db) return NO_DB;
   try {
     const sid = metrics.resolveSession(args?.session_id || null);
     if (!sid) return { content: [{ type: "text", text: "no session yet" }] };

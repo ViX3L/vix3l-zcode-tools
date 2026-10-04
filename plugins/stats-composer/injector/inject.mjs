@@ -852,14 +852,20 @@ function wsSend(ws, method, params, msgId, sessionId) {
 
 // Every CDP command is time-boxed: a page wedged in a modal state or a
 // half-closed socket otherwise hangs the sweep forever, and the 10s
-// re-sweep would never recover it.
+// re-sweep would never recover it. The timer is cleared as soon as the call
+// settles — a leaked timer would keep the event loop alive for the whole
+// budget, so a one-shot sweep that finished in 200 ms would linger until its
+// longest timeout (30 s) expired before the process could exit.
 function makeTimed(ws) {
   let id = 0;
   return (method, params, sessionId, budgetMs = 4000) =>
-    Promise.race([
-      wsSend(ws, method, params, ++id, sessionId),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("cdp timeout: " + method)), budgetMs)),
-    ]);
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("cdp timeout: " + method)), budgetMs);
+      wsSend(ws, method, params, ++id, sessionId).then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); }
+      );
+    });
 }
 
 async function injectIntoTarget(ws, target, timed, script) {

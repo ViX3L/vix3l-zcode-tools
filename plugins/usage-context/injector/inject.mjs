@@ -569,11 +569,19 @@ async function main() {
   if (!targets.length) return "no app targets";
   const ws = await wsClient(browserWsUrl);
   let id = 0;
+  // Each CDP command is time-boxed so a half-closed socket cannot hang the
+  // sweep. The timer is cleared as soon as the call settles: a leaked timer
+  // would hold the event loop open for the whole budget, so a one-shot sweep
+  // that finished in 200 ms would linger until its longest timeout expired
+  // before the process could exit.
   const timed = (method, params, sessionId, budgetMs = 4000) =>
-    Promise.race([
-      wsSend(ws, method, params, ++id, sessionId),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("cdp timeout: " + method)), budgetMs)),
-    ]);
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("cdp timeout: " + method)), budgetMs);
+      wsSend(ws, method, params, ++id, sessionId).then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); }
+      );
+    });
   let mounted = 0;
   try {
     for (const t of targets) {

@@ -1,0 +1,121 @@
+# Release a plugin to GitHub Releases.
+#
+# A release is created by pushing a version tag. Two tag shapes are supported so
+# a monorepo of independent plugins can release either together or separately:
+#
+#   v0.1.17                       → releases every plugin at its current version
+#   stats-composer-v0.1.17        → releases only stats-composer, at that version
+#   usage-context-v0.1.2          → releases only usage-context
+#
+# The tag's version MUST equal the version declared in that plugin's
+# .zcode-plugin/plugin.json. A mismatch fails the run before anything is
+# published, because a Release whose asset says 0.1.17 while the manifest says
+# 0.1.16 is worse than no Release at all.
+#
+# Each released plugin gets:
+#   * a GitHub Release tagged as above, with generated notes
+#   * the plugin's own source tree as an archive (zip + tar.gz), which is what a
+#     user drops into their ZCode plugins directory or points a local marketplace
+#     at — the catalog never needs to be fetched from a release to install
+#   * a SHA-256 checksum file for both archives
+#
+# The suite runs first (in the same container CI uses), so a tag cannot publish
+# a build that does not pass its own tests — matching the container-first rule
+# the rest of the repo follows.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "*-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)release, e.g. stats-composer-v0.1.17"
+        required: true
+        type: string
+
+permissions:
+  contents: write # create the Release and upload its assets
+
+jobs:
+  # --- gate: the suite must pass on the tagged commit -----------------------
+  test:
+    name: Test suite (container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tests/docker/Dockerfile
+          tags: vix3l-zcode-tools-tests:release
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run tests
+        run: |
+          docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:release > test-output.txt 2>&1
+          status=$?
+          cat test-output.txt
+          exit $status
+
+  # --- plan: turn the tag into a list of {plugin, version} to release -------
+  plan:
+    name: Resolve plugins from the tag
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      any: ${{ steps.resolve.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - id: resolve
+        name: Resolve
+        run: node .github/scripts/release-plan.mjs "${{ github.event.inputs.tag || github.ref_name }}"
+        shell: bash
+
+  # --- release: one job per plugin, publishing its archives ---------------
+  release:
+    name: Release ${{ matrix.plugin }}@${{ matrix.version }}
+    needs: [test, plan]
+    if: needs.plan.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Build the plugin archive and checksums
+        id: pkg
+        run: bash .github/scripts/package-plugin.sh "${{ matrix.plugin }}" "${{ matrix.version }}"
+
+      - name: Create the Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ matrix.tag }}
+          name: ${{ matrix.title }}
+          generate_release_notes: true
+          body: |
+            ${{ matrix.plugin }} ${{ matrix.version }}
+
+            Install from the marketplace (add `https://github.com/${{ github.repository }}`
+            as a plugin marketplace in ZCode), or download the archive below and unpack it
+            into your ZCode plugins directory.
+
+            Archives are the plugin's own source tree, so they can also be pointed at as a
+            local marketplace directory.
+          files: |
+            dist/${{ matrix.plugin }}-${{ matrix.version }}.zip
+            dist/${{ matrix.plugin }}-${{ matrix.version }}.tar.gz
+            dist/${{ matrix.plugin }}-${{ matrix.version }}.sha256

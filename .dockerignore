@@ -1,0 +1,18 @@
+# Keep the build context small: everything the container needs is source plus
+# package.json/package-lock.json, and the image installs its own node_modules.
+.git
+.gitignore
+node_modules
+tests/.artifacts
+raw
+wiki
+tools
+docs
+.zcode
+.agents
+.hermes
+.commandcode
+.roo
+.kilo
+skills-lock.json
+*.log

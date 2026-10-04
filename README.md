@@ -79,16 +79,67 @@ The card layout is also settable by hand: write `{"wideCard": false}` to `~/.zco
 
 Everything runs locally. The stats server binds `127.0.0.1` only, the usage database is opened read-only and never modified, and the plugins make no network requests of their own — no analytics, no accounts, no egress.
 
+## Tests
+
+The suite runs entirely in a container, so nothing has to be installed on your
+machine — no Node, no Chromium, no libraries:
+
+```sh
+docker compose -f tests/docker/compose.yml run --rm tests
+```
+
+That builds the image on first use, runs every tier, and exits with the suite's
+status. To run one tier, pass a command (the quoted glob discovers every file in
+that tier):
+
+```sh
+docker compose -f tests/docker/compose.yml run --rm tests \
+  node --test --test-concurrency=1 "tests/ui/**/*.test.mjs"
+```
+
+The tiers, and what each one actually proves:
+
+| Tier | What it covers |
+|---|---|
+| `tests/unit` | Pure logic: the metrics arithmetic against a fixture database, the hook contracts over real processes, the line-delimited JSON-RPC framing the app expects, cross-platform runtime paths, and the release tooling. |
+| `tests/integration` | The sidecar's HTTP contract against the real server process and a fixture database: paging, sorting, CORS and method gates, the Prometheus endpoint, the dashboard's HTML. |
+| `tests/ui` | The rendered surfaces in a real Chromium: the composer pill and its hover card, the per-turn usage chips and their two hover panels, and the dashboard with its donut geometry and theme toggle. |
+| `tests/e2e` | The real injector processes against a real CDP endpoint: target filtering, browser-endpoint attach, attach state, and the two plugins coexisting on one page. |
+
+The UI and E2E tiers do not run a copy of the page scripts.
+`tests/lib/extract.mjs` slices the real `PILL_JS_TEMPLATE`, `PAGE_JS`, `CSS` and
+card skeleton out of the injectors' source and applies the same placeholder
+substitutions the injector applies, so the browser runs what the plugin would
+inject. That is what makes a layout assertion a measurement of the shipping code
+rather than of a test fixture. The plugins themselves have no runtime
+dependencies; the only package here is Playwright, used as a browser driver,
+pinned in `package.json`.
+
 ## Repository layout
 
 ```
 marketplace.json        ← catalog ZCode reads when this repo is added by URL
 assets/                 ← screenshots used by this README
+.github/                ← CI and release workflows, release scripts, About copy
 plugins/
 ├── marketplace.json    ← catalog for local-directory installs
 ├── stats-composer/     ← plugin: per-request TPS/TTFT
 └── usage-context/      ← plugin: per-turn usage chips
+tests/
+├── docker/             ← Dockerfile and compose file for the whole suite
+├── lib/                ← extractor, fixtures, sidecar/browser/CDP drivers
+├── unit/ integration/ ui/ e2e/
+└── README.md           ← how the harness works, tier by tier
 ```
+
+## Releases
+
+Releases are cut by pushing a version tag; `.github/workflows/release.yml` runs
+the suite first, then publishes a GitHub Release per plugin with its source tree
+as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.17` to
+release every plugin, or `stats-composer-v0.1.17` / `usage-context-v0.1.2` for
+one. See [`.github/ABOUT.md`](.github/ABOUT.md) for the tag convention and the
+repository About copy.
 
 ## Developed by
 

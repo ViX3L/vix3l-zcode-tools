@@ -1,0 +1,39 @@
+# Run the whole suite in a container — no local install of Node, Chromium or any
+# library required. From the repository root:
+#
+#   docker compose -f tests/docker/compose.yml run --rm tests
+#
+# To run one tier, pass your own command (a quoted glob discovers every file of
+# that tier):
+#
+#   docker compose -f tests/docker/compose.yml run --rm tests \
+#     node --test --test-concurrency=1 "tests/unit/**/*.test.mjs"
+#
+# The image is built on first use and cached afterwards; rebuild after changing
+# package.json or the Dockerfile with:
+#
+#   docker compose -f tests/docker/compose.yml build
+services:
+  tests:
+    build:
+      context: ../..
+      dockerfile: tests/docker/Dockerfile
+    # Chromium needs more shared memory than the 64 MB default, or it crashes
+    # mid-suite on a large page.
+    shm_size: 1gb
+    # The tests bind loopback ports and drive a headless browser; they need no
+    # network egress beyond the npm/browser install already baked into the image.
+    init: true
+    working_dir: /app
+    # The source is baked into the image, so a run is reproducible from a tag
+    # alone. These volumes keep the checkout in sync for local iteration: the
+    # image's copy is what CI validates, the mount makes local edits visible.
+    volumes:
+      - ../../:/app
+      - /app/node_modules
+      - /ms-playwright
+    environment:
+      NODE_NO_WARNINGS: "1"
+    # The quoted glob is expanded by the test runner itself; a bare directory
+    # argument is not accepted here (it fails with MODULE_NOT_FOUND).
+    command: ["node", "--test", "--test-concurrency=1", "--test-timeout=60000", "tests/**/*.test.mjs"]
