@@ -10,9 +10,12 @@
 #
 # Jobs:
 #   test     — build the image and run every tier (unit, integration, ui, e2e)
-#   package  — on a version tag, build a per-plugin archive and attach it to the
-#              GitHub Release (see .github/workflows/release.yml for the release
-#              itself; this job only proves packaging works on every push)
+#   versions — assert a plugin's version is identical in all three places it is
+#              declared, so a drift fails here instead of at install time
+#
+# This workflow publishes nothing: it is read-only (`contents: read`) and fires
+# on branches only. Cutting a Release is release.yml's job, and only a matching
+# version tag triggers it — a version bump on a branch is tested, not released.
 name: CI
 
 on:
