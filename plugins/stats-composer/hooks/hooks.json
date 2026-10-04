@@ -1,0 +1,32 @@
+{
+  "description": "stats-composer: per-request TPS/TTFT visibility",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/session-start.mjs"],
+            "timeoutMs": 3000,
+            "statusMessage": "stats-composer: init"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "node",
+            "args": ["${ZCODE_PLUGIN_ROOT}/hooks/prompt-submit.mjs"],
+            "timeoutMs": 6000,
+            "statusMessage": "stats-composer: stats channel check"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "stats-composer": {
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/mcp/stats-server.mjs"]
+    }
+  }
+}

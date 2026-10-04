@@ -1,0 +1,55 @@
+{
+  "name": "stats-composer",
+  "version": "0.1.11",
+  "description": "Per-request TPS (tok/s) and TTFT (first-token latency) stats for ZCode, shown at the position you marked: inline in the composer toolbar, next to the + button. Reads the usage DB that ZCode itself already records for every provider, so custom endpoints and all API kinds work identically. Includes a zero-context-pollution sidecar (live stats + optional composer pill injection) as an opt-in integration mode, a /stats-composer:tps command, MCP tools, and a lightweight dashboard.",
+  "author": {
+    "name": "ViX3L"
+  },
+  "license": "MIT",
+  "keywords": [
+    "tps",
+    "ttft",
+    "tokens-per-second",
+    "performance",
+    "composer"
+  ],
+  "commands": "commands",
+  "skills": "skills",
+  "userConfig": {
+    "mode": {
+      "title": "Integration mode",
+      "description": "auto = composer pill if remote debugging is available, otherwise assistant-attached stats. skill = assistant-attached stats only. sidecar = background live-stats server only. One of: auto, skill, sidecar.",
+      "type": "string",
+      "default": "auto",
+      "required": false
+    },
+    "position": {
+      "title": "Pill position",
+      "description": "Where the stats pill sits in the composer toolbar. left = next to the + button (as marked in your screenshots). right = at the far right, near the model selector. One of: left, right.",
+      "type": "string",
+      "default": "left",
+      "required": false
+    },
+    "live": {
+      "title": "Live streaming rate while generating",
+      "description": "In live mode, show an interpolation of the last completed request's rate while the model is still streaming.",
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "window": {
+      "title": "Session window size",
+      "description": "How many recent requests to average for the session rate (Hermes uses 10).",
+      "type": "number",
+      "default": 10,
+      "required": false
+    },
+    "port": {
+      "title": "Sidecar port",
+      "description": "HTTP port for the sidecar stats server (used by the composer pill and dashboard).",
+      "type": "number",
+      "default": 7427,
+      "required": false
+    }
+  }
+}

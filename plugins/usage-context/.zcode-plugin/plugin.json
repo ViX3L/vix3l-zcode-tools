@@ -1,0 +1,48 @@
+{
+  "name": "usage-context",
+  "version": "0.1.0",
+  "description": "Per-turn token-usage chips for ZCode, shown in each assistant turn's footer right of the timestamp: 'Usage N tok' and 'Ran for Ns'. Hovering either chip opens a panel with the full breakdown ZCode records for that turn (total, cache hit %, uncached input, cached input, output, provider/model, steps). Reads turn_usage data from the stats-composer sidecar (one shared server, no second process of its own).",
+  "author": {
+    "name": "ViX3L"
+  },
+  "license": "MIT",
+  "keywords": [
+    "usage",
+    "tokens",
+    "context",
+    "cache",
+    "turn"
+  ],
+  "commands": "commands",
+  "skills": "skills",
+  "userConfig": {
+    "showChips": {
+      "title": "Show per-turn chips",
+      "description": "Render the 'Usage N tok' and 'Ran for Ns' chips in each assistant turn footer.",
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "showRanFor": {
+      "title": "Show the 'Ran for' chip",
+      "description": "Also render the elapsed-time chip. Turn it off to keep only the token chip.",
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    "sidecarPort": {
+      "title": "stats-composer sidecar port",
+      "description": "Port of the stats-composer sidecar that serves per-turn usage on /turn. This plugin reads that endpoint instead of opening the usage DB itself, so only one server ever runs.",
+      "type": "number",
+      "default": 7427,
+      "required": false
+    },
+    "port": {
+      "title": "Unused port slot",
+      "description": "Kept distinct from stats-composer's 7427 on purpose. This plugin does not bind a port (it reuses stats-composer's server); the value exists only so a future standalone mode cannot silently collide with 7427.",
+      "type": "number",
+      "default": 7428,
+      "required": false
+    }
+  }
+}
