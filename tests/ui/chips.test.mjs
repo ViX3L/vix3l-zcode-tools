@@ -448,26 +448,31 @@ test("a re-injection is a no-op while the generation is current", async () => {
   assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-card").length), 1);
 });
 
-test("a superseding generation sweeps the previous generation's nodes instead of duplicating them", async () => {
-  // A real supersede (a plugin update, or a version bump) arrives as the SAME
-  // page script with a different VERSION, re-evaluated against the SAME
-  // window.__usageContext singleton. That shared identity is what lets the new
-  // generation shut the old one down: the old closure's owner() compares its
-  // captured epoch against the singleton's, so bumping the singleton's version
-  // makes the old generation stand down. The stale nodes a previous generation
-  // left are then swept and rebuilt — never duplicated.
+test("a superseding generation ADOPTS the live chip and sweeps only foreign leftovers", async () => {
+  // A supersede (a plugin update, or a stale-port injector trading the page back)
+  // arrives as the SAME page script with a different VERSION, re-evaluated
+  // against the same window.__usageContext singleton: bumping the singleton's
+  // version makes the running generation stand down. What the new generation
+  // does with the nodes is the part that was wrong — it used to delete every
+  // .uc-wrap and rebuild it, which blanked the chips until its own fetch landed.
+  // That blank is the blink a user reported, so this pins the fix: the live chip
+  // is adopted (its figure survives the takeover) and only leftovers this build
+  // cannot paint are removed.
   const { script, css } = usageChips(mock.port);
   const page = await newPage(conversationHtml({ turnIds: ["msg_1"] }));
   await install(page, { script, css });
   await settled(page);
   await hover(page, ".uc-usage"); // creates the card host, as a real session would
   // Park the pointer OFF the chips before re-injecting. If it stayed over the
-  // rebuilt chip, Chromium would re-run hit testing as the new node appears
-  // under a stationary pointer and fire pointerover — legitimately reopening the
-  // card — which would make "the stale host was swept" unobservable here.
+  // chip, Chromium would re-run hit testing as the node changes under a
+  // stationary pointer and fire pointerover — legitimately reopening the card —
+  // which would make "the stale host was swept" unobservable here.
   await moveAway(page);
+  const painted = await deepText(page, ".uc-usage-val");
   await page.evaluate(() => {
-    // Plant a previous generation's leftovers: a chip wrap and a card host.
+    // A leftover from an INCOMPATIBLE build: a bare wrap carrying none of the
+    // spans this build paints, so it could never be updated — plus a card host,
+    // and a singleton version that makes the running generation look stale.
     const stale = document.createElement("span");
     stale.className = "uc-wrap";
     stale.setAttribute("data-uc-for", "msg_1");
@@ -475,20 +480,49 @@ test("a superseding generation sweeps the previous generation's nodes instead of
     const host = document.createElement("div");
     host.className = "uc-card-host";
     document.body.appendChild(host);
-    // Force the running generation to look superseded, on the shared singleton.
     window.__usageContext.version = "0-stale";
   });
   assert.notEqual(await install(page, { script, css }), "already", "a changed generation must not be dismissed as already current");
-  await until(page, () => document.querySelectorAll(".uc-wrap").length === 1, { label: "stale wraps swept" });
+  // The takeover itself must not blank anything: the figure is already there,
+  // carried by the adopted node, before the new generation has fetched once.
+  assert.equal(await deepText(page, ".uc-usage-val"), painted, "a takeover must not blank a painted chip");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-wrap").length), 1,
-    "the previous generation's wrap must be swept, not left behind");
+    "the unpaintable leftover must be swept, and the live chip adopted rather than rebuilt");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-card-host").length), 0,
     "the previous generation's card host must be swept (the new one is created lazily)");
-  await settled(page);
-  await hover(page, ".uc-usage");
+  // The new generation owns the chips only once its first fetch has been
+  // APPLIED, and the chip cannot show that — it is already painted, by the
+  // generation this one adopted from. The panel is the honest signal: it refuses
+  // to open without this generation's own figures, so retry until it does.
+  const deadline = Date.now() + 8000;
+  let opened = false;
+  while (!opened && Date.now() < deadline) {
+    await moveAway(page); // re-enter the chip, so pointerover fires again
+    await hover(page, ".uc-usage");
+    opened = await ucCardVisible(page);
+  }
+  assert.equal(opened, true, "the panel must open once the new generation has its own figures");
   assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-card-host").length), 1);
   assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-card").length), 1);
-  assert.equal(await deepText(page, ".uc-usage-val"), "729K tok", "the rebuilt chips must carry the figures");
+  assert.equal(await deepText(page, ".uc-usage-val"), painted, "the adopted chip must carry the figures");
+});
+
+test("a chip outlives a footer the app is re-rendering without its timestamp", async () => {
+  // turnFooters() needs the footer's timestamp row to recognise an assistant
+  // turn, and the app drops it for a frame while it is streaming. Deleting the
+  // chip on that snapshot and rebuilding it on the next poll was a blink of its
+  // own: the chip may go only when the turn itself leaves the DOM.
+  const page = await chipsPage({ html: { turnIds: ["msg_1"] } });
+  await settled(page);
+  await page.evaluate(() => { document.querySelector(".ts").textContent = ""; });
+  await page.waitForTimeout(2600); // at least one poll with the footer unreadable
+  const kept = await page.evaluate(() => {
+    const w = document.querySelector(".uc-wrap");
+    return { wraps: document.querySelectorAll(".uc-wrap").length, connected: !!w && w.isConnected, val: w ? w.querySelector(".uc-usage-val").textContent : null };
+  });
+  assert.equal(kept.wraps, 1, "an unreadable footer must not cost the chip");
+  assert.equal(kept.connected, true);
+  assert.equal(kept.val, "729K tok", "and it must keep the figure it already had");
 });
 
 test("the script's VERSION is a non-empty identity", async () => {

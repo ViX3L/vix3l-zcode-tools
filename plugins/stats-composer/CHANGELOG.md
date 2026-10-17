@@ -16,6 +16,30 @@ wiki (`wiki/log.md`), which is where the pre-git history of the plugin lives.
 
 ## [Unreleased]
 
+## [0.1.20] - 2026-10-17
+
+### Fixed
+
+- **The composer pill can no longer be repainted by an injector that has no sidecar
+  to read.** The injector now checks that its own sidecar port is answering before
+  it touches the page. A generation pointed at a dead port used to supersede the
+  healthy one all the same — a supersede is a visible event, it replaces the
+  injected script — and then painted from nothing, so the pill emptied and
+  refilled as the two traded the composer. The same fault was reported against
+  usage-context's chips, where it was measured live (an orphaned injector trading
+  the page every ~10 s and blanking the chips on every trade); this plugin shares
+  the design and so shared the fault. An injector that has already attached stays
+  and skips a sweep while the sidecar is down, so a sidecar restart does not take
+  the pill away for the rest of the session; one that never had a data source
+  exits instead of lingering and holding the singleflight lock.
+
+### Changed
+
+- The sidecar-liveness probe is defined once, in `scripts/lib/runtime.mjs`, and
+  used by both of this plugin's hooks and the injector (three copies of it had
+  drifted apart, differing only in their timeout: 500 ms in the two hooks, 700 ms
+  in usage-context's; the shared probe uses one 700 ms budget).
+
 ## [0.1.19] - 2026-10-17
 
 ### Fixed

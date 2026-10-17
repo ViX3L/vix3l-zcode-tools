@@ -30,6 +30,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { sidecarAlive } from "../scripts/lib/runtime.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUN_DIR = path.join(os.homedir(), ".zcode", "usage-context");
@@ -134,7 +135,12 @@ const PAGE_JS = `
   // 8: the Turn time panel's header no longer repeats its only row's figure.
   // 9: the sidecar port is part of the generation identity, so a generation
   //    left polling a stale port is superseded instead of answering 'already'.
-  var VERSION = '9';
+  // 10: a supersede ADOPTS the previous generation's chips instead of deleting
+  //    them, and a generation with no data yet never downgrades a painted
+  //    figure to "—": a takeover used to blank the chips for as long as the new
+  //    generation took to fetch — the blink a user sees during an update, or
+  //    while any stale-port injector trades the page back and forth.
+  var VERSION = '10';
   var EPOCH = Math.random().toString(36).slice(2, 10);
   var SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
   // The sidecar port is part of the generation identity (see aliveHere). Baked
@@ -158,19 +164,40 @@ const PAGE_JS = `
   S.hovering = null;
   S.dead = false;
 
-  // A previous generation's nodes are invisible to this generation's chip map
-  // (that map is closure-local), so a re-injection would otherwise append a
-  // second wrap to every footer. Sweep the DOM clean first — the nodes are
-  // tagged, so this is unambiguous and idempotent.
-  (function () {
-    var old = document.querySelectorAll('.uc-wrap, .uc-card-host');
-    for (var i = 0; i < old.length; i++) { try { old[i].remove(); } catch (e) {} }
-  })();
-
   var state = { byMsg: null, sessionId: null, fetchedAt: 0, lastErr: null };
   // Chips we have created, keyed by the turn's data-turn-id. Kept so a re-render
   // patches text in place (never replaces nodes under the cursor).
   var chips = new Map();
+
+  // Take over the previous generation's nodes by ADOPTING them, not deleting
+  // them. The chip map is closure-local, so a fresh generation used to sweep
+  // every .uc-wrap out of the DOM and rebuild it — which blanked the chips for
+  // as long as the new generation took to fetch. A supersede happens on a plugin
+  // update and whenever a stale-port injector trades the page back, so that
+  // blank was a recurring blink rather than a one-off. The nodes are tagged
+  // data-uc-for and carry exactly the spans this build paints, so the map can be
+  // rebuilt from the DOM and the first paint patches text in place. A wrap from
+  // an INCOMPATIBLE build (missing spans) is removed instead: this generation
+  // could never paint it, so leaving it would only show a dead chip.
+  (function () {
+    var old = document.querySelectorAll('.uc-wrap');
+    for (var i = 0; i < old.length; i++) {
+      var w = old[i];
+      var key = w.getAttribute('data-uc-for');
+      var uval = w.querySelector('.uc-usage-val'), tval = w.querySelector('.uc-time-val');
+      var uchip = w.querySelector('.uc-usage'), tchip = w.querySelector('.uc-time');
+      if (key && uval && tval && uchip && tchip) {
+        chips.set(key, { wrap: w, usageVal: uval, timeVal: tval, chipUsage: uchip, chipTime: tchip, data: null, painted: true });
+      } else {
+        try { w.remove(); } catch (e) {}
+      }
+    }
+    // The card host is created lazily and is pure chrome, so it is always swept:
+    // adopting one would leave the previous generation's positioning state.
+    var hosts = document.querySelectorAll('.uc-card-host');
+    for (var j = 0; j < hosts.length; j++) { try { hosts[j].remove(); } catch (e) {} }
+  })();
+
   var cardEl = null, cardHost = null;
   var owner = function () { return S.epoch === EPOCH && S.version === VERSION; };
 
@@ -257,20 +284,27 @@ const PAGE_JS = `
       '</span>';
     // Place to the RIGHT of the timestamp span, which is the row's last child.
     row.appendChild(wrap);
-    rec = { wrap: wrap, usageVal: wrap.querySelector('.uc-usage-val'), timeVal: wrap.querySelector('.uc-time-val'), chipUsage: wrap.querySelector('.uc-usage'), chipTime: wrap.querySelector('.uc-time'), data: null };
+    rec = { wrap: wrap, usageVal: wrap.querySelector('.uc-usage-val'), timeVal: wrap.querySelector('.uc-time-val'), chipUsage: wrap.querySelector('.uc-usage'), chipTime: wrap.querySelector('.uc-time'), data: null, painted: false };
     chips.set(key, rec);
     return rec;
   }
 
   function paint(entry) {
     var rec = ensureChips(entry);
-    var t = state.byMsg && state.byMsg[entry.turnId];
+    var t = state.byMsg ? state.byMsg[entry.turnId] : null;
     rec.data = t || null;
+    // With NO data yet — a generation that has just taken over, or a session not
+    // read yet — a chip that already shows a figure keeps it. Downgrading a
+    // known figure to "—" because this generation has not fetched anything is
+    // what made a takeover visible as a blink. Once data HAS arrived, a turn
+    // absent from it genuinely has no accounting yet, and shows a dimmed dash.
+    if (!state.byMsg && rec.painted) return;
     var uv = t ? fmtTok(t.totalTokens) : '—';
     var tv = t ? fmtDur(t.durationMs) : '—';
     if (rec.usageVal.textContent !== uv) rec.usageVal.textContent = uv;
     if (rec.timeVal.textContent !== tv) rec.timeVal.textContent = tv;
     rec.wrap.classList.toggle('uc-unknown', !t);
+    rec.painted = true;
   }
 
   function renderAll() {
@@ -281,9 +315,14 @@ const PAGE_JS = `
       seen[footers[i].turnId] = 1;
       paint(footers[i]);
     }
-    // Drop chips whose turn scrolled out of the DOM.
+    // Drop chips whose turn is GONE from the DOM. Not merely absent from one
+    // snapshot of footers: the app re-renders a turn's footer while streaming,
+    // and a snapshot taken in that instant finds no timestamp row — deleting the
+    // chip then, and rebuilding it on the next poll, is a visible blink. The
+    // turn's own element is the honest test.
     chips.forEach(function (rec, key) {
-      if (!seen[key] && rec.wrap && rec.wrap.isConnected) rec.wrap.remove();
+      if (seen[key] || !rec.wrap || !rec.wrap.isConnected) return;
+      if (!document.querySelector('[data-turn-id="' + key + '"]')) rec.wrap.remove();
     });
     if (cardEl && S.hovering && state.byMsg) fillCard(cardEl, S.hovering, S.hoveringChip || 'usage');
   }
@@ -608,11 +647,31 @@ async function main() {
 }
 
 let sweeping = false;
+// Whether this injector has ever put chips on the page. It decides what a dead
+// sidecar means for this process; see the gate in sweepOnce.
+let injected = false;
 async function sweepOnce() {
   if (sweeping) return;
   if (!claimLock()) { log("another injector holds the lock — standing down"); process.exit(3); }
   sweeping = true;
-  try { log(await main()); }
+  try {
+    // With no data source this injector must not claim the page: its script
+    // would supersede the healthy generation (a visible event — see the adoption
+    // note in PAGE_JS) while polling a port nothing answers on. The two
+    // situations get different answers, because they are different: a launch
+    // that never had a data source is doomed, so it exits and stops holding the
+    // singleflight lock against the injector that CAN serve; one that has
+    // already mounted stands by, keeping the figures its chips last read, so a
+    // sidecar restart resumes instead of disabling the chips for the session.
+    if (!(await sidecarAlive(SIDECAR_PORT))) {
+      if (injected) { log(`sidecar on ${SIDECAR_PORT} is not answering — standing by`); return; }
+      log(`no stats-composer sidecar on ${SIDECAR_PORT} — standing down`);
+      process.exit(3);
+    }
+    const r = await main();
+    if (/^mounted/.test(r)) injected = true;
+    log(r);
+  }
   catch (e) { log("sweep error:", String(e.message || e)); }
   finally { sweeping = false; }
 }

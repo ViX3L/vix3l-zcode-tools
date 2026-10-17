@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnDetachedNode } from "../scripts/lib/runtime.mjs";
+import { sidecarAlive, spawnDetachedNode } from "../scripts/lib/runtime.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const RUN_DIR = path.join(os.homedir(), ".zcode", "usage-context");
@@ -35,19 +35,6 @@ function sidecarPort(cfg) {
     if (p) return p;
   } catch {}
   return Number(cfg.sidecarPort) || 7427;
-}
-
-async function sidecarAlive(port) {
-  if (!port) return false;
-  try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 700);
-    const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: ctl.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch {
-    return false;
-  }
 }
 
 function injectorRunning() {

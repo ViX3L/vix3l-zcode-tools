@@ -115,8 +115,35 @@ test("nodeExecutable is the current process's own executable", () => {
 test("both plugins expose the identical runtime surface", async () => {
   // The copies are asserted byte-identical in the manifests test; this asserts
   // the behavioural part of the same contract, so a re-sync that renames an
-  // export is caught too.
-  for (const fn of ["nodeExecutable", "childEnv", "spawnDetachedNode", "spawnAttachedNode", "spawnNodePiped", "appRootFromEnv", "appBinaryFor", "candidateAppBinaries"]) {
-    assert.equal(typeof R2[fn], "function", `usage-context runtime is missing ${fn}`);
+  // export is caught too. Both copies are checked: a helper added to one and
+  // forgotten in the other is exactly the drift these two tests exist for.
+  const fns = [
+    "nodeExecutable", "childEnv", "spawnDetachedNode", "spawnAttachedNode",
+    "spawnNodePiped", "sidecarAlive", "appRootFromEnv", "appBinaryFor",
+    "candidateAppBinaries",
+  ];
+  for (const [plugin, mod] of [["stats-composer", R], ["usage-context", R2]]) {
+    for (const fn of fns) {
+      assert.equal(typeof mod[fn], "function", `${plugin} runtime is missing ${fn}`);
+    }
   }
+});
+
+test("sidecarAlive answers for a listening sidecar, a closed port and no port", async () => {
+  // The one probe both injectors' launch gate and three hooks share: "is the
+  // sidecar answering on this port?" A wrong answer here either starts an
+  // injector with nothing to read or leaves the chips with no data source.
+  const { createServer } = await import("node:http");
+  const server = createServer((req, res) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  try {
+    assert.equal(await R2.sidecarAlive(port), true, "a listening sidecar is alive");
+    assert.equal(await R.sidecarAlive(port), true, "both copies must agree");
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+  assert.equal(await R2.sidecarAlive(port), false, "a closed port is not alive");
+  assert.equal(await R2.sidecarAlive(null), false, "no port is not alive");
+  assert.equal(await R2.sidecarAlive(undefined), false, "an undefined port is not alive");
 });

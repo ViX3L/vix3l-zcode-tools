@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnDetachedNode } from "../scripts/lib/runtime.mjs";
+import { sidecarAlive, spawnDetachedNode } from "../scripts/lib/runtime.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STATE_FILE =
@@ -29,19 +29,6 @@ function discoverSidecar() {
     return Number(fs.readFileSync(path.join(RUN_DIR, "port"), "utf8").trim()) || null;
   } catch {
     return null;
-  }
-}
-
-async function sidecarAlive(port) {
-  if (!port) return false;
-  try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 500);
-    const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: ctl.signal });
-    clearTimeout(t);
-    return r.ok;
-  } catch {
-    return false;
   }
 }
 

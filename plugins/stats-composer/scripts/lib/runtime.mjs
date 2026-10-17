@@ -101,6 +101,32 @@ export function spawnNodePiped(scriptPath, args, extraEnv) {
 }
 
 // ---------------------------------------------------------------------------
+// Is the shared sidecar up?
+// ---------------------------------------------------------------------------
+//
+// Three hooks and both injectors need the same answer to the same question —
+// "is the stats-composer sidecar answering on this port?" — and a copy of the
+// probe per caller is how those answers drift apart. It decides two things: a
+// hook starts an injector only when there is a data source for it, and an
+// injector touches the page only when it can actually serve figures.
+//
+// The budget is a liveness probe, not a data timeout: a sidecar that is up
+// answers /health in single-digit milliseconds, and one that is wedged must not
+// hold a hook open — the hook's stdout IS the hook protocol.
+export async function sidecarAlive(port, timeoutMs = 700) {
+  if (!port) return false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeoutMs);
+    const r = await fetch(`http://127.0.0.1:${port}/health`, { signal: ctl.signal });
+    clearTimeout(t);
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Locating the ZCode installation
 // ---------------------------------------------------------------------------
 //

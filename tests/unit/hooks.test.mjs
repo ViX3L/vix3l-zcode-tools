@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { STATS, USAGE } from "../lib/paths.mjs";
+import { closedPort } from "../lib/mock-sidecar.mjs";
 
 // Run a hook the way the app does: argv mode, JSON on stdin, read stdout.
 function runHook(script, { env = {}, stdin = "", timeoutMs = 8000 } = {}) {
@@ -54,17 +55,29 @@ function baseEnv(home) {
   };
 }
 
-// A port with nothing listening, so "the sidecar is absent" is true regardless
-// of what the developer happens to be running on the plugin's default port.
-async function closedPort() {
-  const { createServer } = await import("node:net");
-  return await new Promise((resolve) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = s.address().port;
-      s.close(() => resolve(p));
-    });
-  });
+// Reap the injector the usage-context hook starts, and return its pid (0 when
+// the hook started none). Running that hook with a REACHABLE sidecar makes it
+// spawn a real, detached injector — that IS the behaviour under test — and
+// `detached` means the process outlives the hook and the test. Unreaped, it
+// sweeps the developer's live app every 10 s forever: five runs of this file
+// left ten orphaned injectors here, and because a generation is identified
+// partly by its sidecar port, they traded the page with the real injector and
+// blanked the user's chips on every trade. The injector records its own pid in
+// the lock it writes under the HOME it was given, which is this sandbox.
+async function reapInjector(home) {
+  const lock = path.join(home, ".zcode", "usage-context", "injector.lock");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    let pid = 0;
+    try { pid = JSON.parse(fs.readFileSync(lock, "utf8")).pid || 0; } catch {}
+    if (pid) {
+      try { process.kill(pid, "SIGKILL"); } catch {}
+      try { fs.rmSync(lock, { force: true }); } catch {}
+      return pid;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return 0;
 }
 
 test("stats session-start emits valid JSON and records the session", async () => {
@@ -204,17 +217,29 @@ test("usage-context session-start reports success (empty context) when the sidec
     env: baseEnv(home),
     stdin: JSON.stringify({ session_id: "sess_hook_6b" }),
   });
-  await new Promise((r2) => server.close(r2));
   assert.equal(r.code, 0);
   const msg = JSON.parse(r.stdout);
   assert.equal(msg.hookSpecificOutput.additionalContext, "");
+  // A reachable sidecar is what makes the hook start this plugin's injector —
+  // the point of the success branch — so nothing may be asserted about it
+  // without reaping the process that assertion implies. The server stays up
+  // until the reaper has it, so the injector cannot stand itself down first.
+  const pid = await reapInjector(home);
+  await new Promise((r2) => server.close(r2));
+  assert.ok(pid > 0, "a reachable sidecar must make the hook start an injector");
 });
 
 test("both session-start hooks survive malformed stdin", async () => {
   // The app always sends JSON, but a hook that throws on anything else would
   // fail the whole session start. Assert graceful degradation, exact JSON out.
+  //
+  // The sidecar port is pinned to a CLOSED one: the usage-context hook's default
+  // is 7427, and on a developer machine that is where the real sidecar lives — so
+  // without this the hook would answer "reachable" and start an injector against
+  // whatever the developer happens to be running. A test must not depend on, or
+  // disturb, the machine it runs on.
   const home = sandbox();
-  writeConfig(home, { mode: "skill" });
+  writeConfig(home, { mode: "skill", sidecarPort: await closedPort() });
   for (const script of [
     path.join(STATS, "hooks", "session-start.mjs"),
     path.join(USAGE, "hooks", "session-start.mjs"),

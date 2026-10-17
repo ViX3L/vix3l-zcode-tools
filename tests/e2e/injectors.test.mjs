@@ -20,7 +20,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { REPO_ROOT, STATS_INJECTOR, USAGE_INJECTOR } from "../lib/paths.mjs";
 import { writeAppPage, launchCdpBrowser, evaluateInPage } from "../lib/cdp.mjs";
-import { startMockSidecar } from "../lib/mock-sidecar.mjs";
+import { closedPort, startMockSidecar } from "../lib/mock-sidecar.mjs";
 
 // The page the injectors will find: the composer DOM the pill needs AND the
 // assistant-turn DOM the chips need, plus the app-shell markers. The zcode
@@ -154,6 +154,41 @@ test("the usage-context injector attaches to the same page and mounts the chips"
   const p = JSON.parse(probe);
   assert.equal(p.wrap, true, "the chip wrap must be in the live page");
   assert.ok(p.epoch, "the page script must have claimed the document singleton");
+});
+
+test("the chips injector stands down when its sidecar is not answering", async () => {
+  // A stale port — an injector started before the sidecar moved, or any stray
+  // process — must not touch the page. Its page script would supersede the
+  // healthy generation and, because a supersede is a DOM event, tear every chip
+  // out of the DOM while polling a port nothing answers on. Measured live
+  // before this gate existed: one such orphan traded the page with the real
+  // injector every ~10 s and blanked the user's chips on every trade.
+  const dead = await closedPort();
+  const { code, out } = await runInjector(USAGE_INJECTOR, [
+    "--port", String(browser.port), "--sidecar-port", String(dead),
+  ]);
+  assert.match(out, /no stats-composer sidecar/, "it must say why it stood down: " + out);
+  // exit 3 is this plugin's "stood down" signal; lingering instead would hold
+  // the singleflight lock against the injector that CAN serve.
+  assert.equal(code, 3, "a doomed injector must exit rather than linger");
+  const claimed = JSON.parse(await evaluateInPage(
+    browser.port, "JSON.stringify((window.__usageContext||{}).port||null)"
+  ));
+  assert.notEqual(claimed, String(dead), "a doomed injector must not claim the page");
+});
+
+test("the pill injector stands down when its sidecar is not answering", async () => {
+  // The same gate as the chips injector, for the same reason: a pill generation
+  // pointed at a dead port supersedes the healthy one and repaints the composer
+  // from nothing. No attach state in a FRESH home is the proof it never reached
+  // the app at all.
+  const dead = await closedPort();
+  const { code, out, home } = await runInjector(STATS_INJECTOR, [
+    "--port", String(browser.port), "--sidecar-port", String(dead),
+  ]);
+  assert.match(out, /no stats-composer sidecar/, "it must say why it stood down: " + out);
+  assert.equal(code, 3, "a doomed injector must exit rather than linger");
+  assert.equal(pillState(home), null, "a doomed injector must not reach the app: no attach state at all");
 });
 
 test("both plugins coexist: the chips injector mounts while the pill is already there", async () => {

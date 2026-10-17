@@ -16,6 +16,39 @@ Entries for `0.1.0` are condensed from the project's own engineering wiki
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
+### Fixed
+
+- **The chips no longer blink out and come back.** A generation that took the
+  page over deleted every chip and rebuilt it, so the chips blanked until the
+  new generation's first fetch landed; and an injector whose sidecar port was
+  dead would still take the page, leaving `—` chips behind while it polled a
+  port nothing answers on. Measured live on this machine: ten injector
+  processes left behind by earlier runs of the hook unit test — each with its
+  own baked-in sidecar port — traded the page with the real injector every
+  ~10 s, and the chips went `3 → 0 → 3` on every trade. Two fixes, because
+  there were two faults: an injector whose own sidecar is not answering now
+  stands down instead of claiming the page, and a takeover now ADOPTS the
+  existing chips (keeping the figures already on screen) instead of deleting
+  them. Injected generation marker is now `10`.
+- **A chip survives a footer the app is re-rendering.** The chip was dropped
+  whenever one DOM snapshot could not find its turn's timestamp row — which the
+  app drops for a frame while streaming — and rebuilt on the next 2 s poll, a
+  blink of its own. A chip now goes only when the turn itself leaves the DOM.
+- **The hook's unit test no longer leaks a live injector.** Running the
+  session-start hook with a reachable sidecar starts a real, detached injector —
+  that is the behaviour under test — and `detached` means it outlives the test.
+  The ten orphans above were exactly that. The test now reaps the process it
+  caused, and the malformed-stdin case pins a closed port so it neither depends
+  on nor disturbs whatever the developer is running.
+
+### Changed
+
+- The sidecar-liveness probe is defined once, in `scripts/lib/runtime.mjs`, and
+  used by this plugin's hook and injector and by stats-composer's two hooks
+  (three copies of it had drifted apart, differing only in their timeout).
+
 ## [0.1.2] - 2026-10-04
 
 ### Fixed

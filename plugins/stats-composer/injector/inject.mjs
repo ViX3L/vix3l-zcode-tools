@@ -23,6 +23,7 @@ process.on("warning", () => {});
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sidecarAlive } from "../scripts/lib/runtime.mjs";
 
 const RUN_DIR = path.join(os.homedir(), ".zcode", "stats-composer");
 const CONFIG_FILE = path.join(RUN_DIR, "config.json");
@@ -1092,6 +1093,7 @@ async function main() {
   }
   log(`injected into ${okCount}/${targets.length} target(s)`);
   writeAttachState(okCount > 0, okCount > 0 ? "attached" : "inject-failed");
+  return okCount > 0;
 }
 
 // Singleflight: two injector processes must not fight over the app's devtools
@@ -1137,6 +1139,9 @@ function claimLock() {
 // In-process re-entrancy guard: a slow sweep must not stack with the next
 // interval tick (overlapping sweeps would fight over the same session id).
 let sweeping = false;
+// Whether this injector has ever put the pill on the page. It decides what a
+// dead sidecar means for this process; see the gate in sweepOnce.
+let attached = false;
 async function sweepOnce() {
   if (sweeping) return;
   if (!claimLock()) {
@@ -1149,7 +1154,23 @@ async function sweepOnce() {
     process.exit(3);
   }
   sweeping = true;
-  try { await main(); } catch (e) { log("sweep error:", String(e.message || e)); } finally { sweeping = false; }
+  try {
+    // An injector with no data source must not claim the page. Its page script
+    // would supersede the healthy generation — a supersede is a visible event —
+    // while polling a port nothing answers on, which is how a stale-port orphan
+    // and the real injector end up trading the composer's pill back and forth.
+    // The two situations get different answers: a launch that never had a data
+    // source is doomed, so it exits rather than lingering and holding the
+    // singleflight lock against the injector that CAN serve; one that has
+    // already attached stays and skips this sweep, so a sidecar restart does not
+    // take the pill away for the rest of the session.
+    if (!(await sidecarAlive(SIDECAR_PORT))) {
+      if (attached) { log(`sidecar on ${SIDECAR_PORT} is not answering — standing by`); return; }
+      log(`no stats-composer sidecar on ${SIDECAR_PORT} — standing down`);
+      process.exit(3);
+    }
+    if (await main()) attached = true;
+  } catch (e) { log("sweep error:", String(e.message || e)); } finally { sweeping = false; }
 }
 
 await (async () => {

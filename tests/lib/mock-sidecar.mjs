@@ -105,6 +105,21 @@ export function sampleTurns(over = {}) {
   };
 }
 
+// A port with nothing listening, so "the sidecar is not answering" is true
+// regardless of what the developer happens to be running on the plugin's default
+// port. Every caller that needs one takes it from here: a per-file copy is how
+// the ports drift apart.
+export async function closedPort() {
+  const { createServer } = await import("node:net");
+  return await new Promise((resolve) => {
+    const s = createServer();
+    s.listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => resolve(p));
+    });
+  });
+}
+
 // Start the mock. `routes` maps a pathname prefix to a value or a function
 // (url) -> value; a function may return a Promise. Defaults mirror the real
 // server for /stats, /turn and /health.
