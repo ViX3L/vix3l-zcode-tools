@@ -1,7 +1,7 @@
 [Desktop Entry]
 # Installed path placeholder: replace the Exec path below with the absolute path
 # to zcode-stats.sh in your plugin checkout (a .desktop file cannot discover its
-# own directory). See docs/cross-platform.md.
+# own directory). That script documents how it finds Node.
 # Copy this file to ~/.local/share/applications/ after editing.
 Name=ZCode (with stats)
 Comment=Start ZCode with a local CDP port so the stats-composer composer pill can attach

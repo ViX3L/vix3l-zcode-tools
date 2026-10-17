@@ -61,9 +61,9 @@ tag. Two tag shapes are supported:
 
 | Tag | Releases |
 |---|---|
-| `v0.1.19` | every plugin, each at its current manifest version |
-| `stats-composer-v0.1.19` | only `stats-composer` |
-| `usage-context-v0.1.2` | only `usage-context` |
+| `v0.1.20` | every plugin, each at its current manifest version |
+| `stats-composer-v0.1.20` | only `stats-composer` |
+| `usage-context-v0.1.3` | only `usage-context` |
 
 The tag's version must equal the version in the plugin's
 `.zcode-plugin/plugin.json`, and the three places a version is declared (the
@@ -78,13 +78,17 @@ changelog section, commit, then push the tag. For example, for `stats-composer`:
 
 ```sh
 # edit plugins/stats-composer/.zcode-plugin/plugin.json,
-#      marketplace.json, plugins/marketplace.json  → 0.1.19
-#      plugins/stats-composer/CHANGELOG.md         → add "## [0.1.19] - <date>"
-git add -A && git commit -m "release: stats-composer 0.1.19"
+#      marketplace.json, plugins/marketplace.json  → 0.1.20
+#      plugins/stats-composer/CHANGELOG.md         → add "## [0.1.20] - <date>"
+git add -A && git commit -m "release: stats-composer 0.1.20"
 git push
-git tag stats-composer-v0.1.19
-git push origin stats-composer-v0.1.19
+git tag stats-composer-v0.1.20
+git push origin stats-composer-v0.1.20
 ```
+
+Push tags in version order when backfilling several at once: GitHub lists
+Releases by date, not by version, so an older tag pushed last appears above a
+newer one.
 
 The workflow runs the full test suite first, so a tag cannot publish a build
 that fails its own tests. It also fails if the version has no changelog section,

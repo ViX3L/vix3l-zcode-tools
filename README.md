@@ -6,8 +6,8 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 
 | Plugin | What it shows | Version |
 |---|---|---|
-| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.19 |
-| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.2 |
+| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.20 |
+| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.3 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
 
@@ -17,7 +17,7 @@ Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sq
 
 ![The stats pill in the ZCode composer toolbar, reading 395.9 tok/s · 4203ms](assets/stats-composer-pill.png)
 
-Hovering the pill opens the **Session statistics** card: latest request and windowed averages, session time split, turn/step/tool-call counts, and the token and cache breakdown. The card ships in a roomy layout by default; a **compact** layout is one setting away (see below):
+Hovering the pill opens the **Session statistics** card: latest request and windowed averages, session time split, turn/step/tool-call counts, the token and cache breakdown, and — when the session started any — a **subagent activity** block: how many ran, what they cost, and what share of the session's tokens they account for. The card ships in a roomy layout by default; a **compact** layout is one setting away (see below):
 
 | Wide (default) | Compact |
 |---|---|
@@ -28,6 +28,48 @@ Hovering the pill opens the **Session statistics** card: latest request and wind
 ![Per-turn Usage and Ran-for chips beside a turn timestamp](assets/usage-context-chips.png)
 
 ![The Turn usage hover panel showing provider/model, uncached input and output](assets/usage-context-panel.png)
+
+## How it works, in plain words
+
+**ZCode already writes everything down.** Every time you send a message, ZCode records in its own database how many tokens went in and out, how long until the first token arrived, how fast the rest streamed, and how long the turn took. It does this for itself, whatever provider you use.
+
+**The plugins only read that notebook.** Nothing is sniffed from the network and no model traffic is touched, which is why the figures are identical for a built-in provider, a subscription plan, or a custom endpoint. The database is opened **read-only**.
+
+```mermaid
+flowchart LR
+  A["You send a message"] --> B["ZCode talks to the model<br/>and writes down what happened"]
+  B --> C[("ZCode's own notebook<br/>~/.zcode/cli/db/db.sqlite")]
+  C --> D["A tiny local server reads it<br/>127.0.0.1:7427<br/>reachable only from your machine"]
+  D --> E["The pill in the toolbar"]
+  D --> F["The chips beside each turn"]
+  D --> G["The dashboard in a browser tab"]
+```
+
+**Drawing on the screen needs the app's debug door.** The pill and the chips are not part of ZCode — a small helper process draws them by evaluating a script inside the app's own renderer, through its remote-debugging port (CDP). That door is closed unless you launch ZCode with it open, which is why everything else (dashboard, CLI, the appended stats line) exists as a fallback.
+
+**Only one drawing helper may own the screen at a time.** Each helper carries a badge: the script version, a random id for this run, and the sidecar port it reads. A helper whose badge differs takes the screen over — that is how an update or a settings change appears without restarting the app. Three rules make a takeover invisible, and a fourth stops a helper that cannot work from taking the screen at all:
+
+```mermaid
+flowchart TB
+  subgraph old["BEFORE the fix — a takeover erased everything"]
+    direction LR
+    B1["A newer helper<br/>takes the screen"] --> B2["Erases every chip<br/>and starts over"] --> B3["Has not read the<br/>notebook yet"] --> B4["Chips blank<br/>= the flicker"]
+  end
+  subgraph new["AFTER the fix — a takeover keeps what is on screen"]
+    direction LR
+    A1["A newer helper<br/>takes the screen"] --> A2["Keeps the chips already<br/>there, matching them by turn"] --> A3["Updates the numbers<br/>in place"] --> A4["Nothing flickers"]
+  end
+  B4 -.->|"fixed by"| A1
+```
+
+1. A takeover **keeps** the chips that are already on screen and matches them to their turns, instead of erasing everything and starting over.
+2. A helper that has not read the notebook yet never blanks a figure that is already showing.
+3. A chip disappears only when its turn is really gone from the page — not when one snapshot catches the app mid-re-render without the timestamp row.
+4. A helper that cannot reach its own server may not take the screen at all: it stands down rather than owning a display it is unable to fill.
+
+Rule 4 came from a measurement, not a theory. Ten stray helpers — left behind by earlier runs of this repository's own test suite — were alive at once: five pointed at a random port where nothing listens, five at the real one. They took the screen in turns about every 10 seconds, and every takeover blanked the chips, which is exactly what the "shows, goes blank, shows again" flicker was. The test that leaked them now cleans up after itself.
+
+**One asymmetry, stated rather than hidden:** the chips adopt on takeover, but the *pill* still redraws its own small badge when a newer helper takes the composer. Its node is cheap to redraw and that flicker was never reported, so the rule was not applied there; if it ever appears, the same keep-and-update approach is what fixes it.
 
 ## Install
 
@@ -106,6 +148,11 @@ invalidates, so it takes a second or two):
 docker compose -f tests/docker/compose.yml run --rm --build tests
 ```
 
+That rebuild is not optional: a plain run reuses the image built last time, so it
+tests the *previous* checkout — including a checkout from before your test exists.
+The counts give it away (a run reporting fewer tests than the tree contains is a
+stale image, not a passing suite).
+
 The tiers, and what each one actually proves:
 
 | Tier | What it covers |
@@ -144,17 +191,23 @@ tests/
 ## Releases
 
 Releases are cut by pushing a version tag; `.github/workflows/release.yml` runs
-the suite first, then publishes a GitHub Release per plugin with its source tree
-as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.19` to
-release every plugin, or `stats-composer-v0.1.19` / `usage-context-v0.1.2` for
-one. See [`.github/ABOUT.md`](.github/ABOUT.md) for the tag convention and the
-repository About copy.
+the whole suite first, then publishes a GitHub Release per plugin with its source
+tree as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.20` to
+release every plugin, or `stats-composer-v0.1.20` / `usage-context-v0.1.3` for
+one. A tag's version must match the plugin's own manifest — a mismatch fails the
+run before anything is published.
 
 Each Release's notes are the plugin's changelog section for that version — what
 actually changed, not a redirect to the commit list:
 [stats-composer](plugins/stats-composer/CHANGELOG.md) ·
-[usage-context](plugins/usage-context/CHANGELOG.md). See
-[`docs/releases/`](docs/releases/README.md) for the full release process.
+[usage-context](plugins/usage-context/CHANGELOG.md). The tag convention, the
+worked example and the repository About copy are in
+[`.github/ABOUT.md`](.github/ABOUT.md).
+
+Installing from ZCode does **not** go through a Release: the marketplace reads
+[`marketplace.json`](marketplace.json) on `main`, so a version bump reaches you
+as soon as it is pushed. Releases are the record of each version, and where the
+downloadable archives live.
 
 ## Developed by
 
