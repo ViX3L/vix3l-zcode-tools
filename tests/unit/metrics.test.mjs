@@ -336,102 +336,317 @@ test("formatLine and formatSnapshot render a rate and a TTFT", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Subagent activity — the separate surface.
+// Subagent activity — the conversation's own tree.
 //
-// The fixture's r_sub row is a subagent request the tests above prove is
-// EXCLUDED from the session figures. These tests prove the new surface picks it
-// up — and only it — while leaving every number above untouched. `sinceTs` is
-// the key knob: the surface is time-windowed because the schema cannot link a
-// subagent row to the turn that spawned it (turn_id never matches, and
-// parent_user_message_id does not join).
-// ---------------------------------------------------------------------------
+// A subagent's requests are written to its OWN session, never the parent's, and
+// the link back is `session.parent_id`: the child names the session that spawned
+// it. That makes the surface SESSION-SCOPED — "what the subagents of THIS
+// conversation did" — which is a different statement from the time window these
+// tests used to pin ("what any subagent on the machine did in the last 15 min").
+//
+// Three properties matter to a human reading the card, and each has a test here:
+//
+//   1. it counts this conversation's children and nobody else's;
+//   2. the count is MONOTONIC — requests complete, so the number only grows.
+//      The old window made it fall (91 → 89) as rows aged out, which is the
+//      reversal the card used to show;
+//   3. the children's tokens are part of the session's totals, with the split
+//      carried in `tokens.subagents` / `tokens.subagentSharePct`, so the card's
+//      cache-hit % describes the whole tree instead of only the conversation.
+//
+// The fixture below is built with exact numbers so every assertion is a value
+// this file states rather than one it hopes for.
 
-test("subagentActivity reports the subagent requests the session figures exclude", () => {
-  const dbh = open();
-  const sa = M.subagentActivity(dbh, 0);
-  assert.equal(sa.requests, 1, "only the subagent row belongs to this surface");
-  assert.equal(sa.sessions, 1);
-  assert.equal(sa.agents.length, 1);
-  assert.equal(sa.agents[0].agent, "subagent");
-  assert.equal(sa.agents[0].requests, 1);
-  // r_sub: 9999 output + 0 reasoning = 9999 tok. Its generation window is
-  // completed_at - first_token_at = 1_305_000 - 1_300_200 = 4_800 ms (the
-  // fixture's firstTokenAt defaults to startedAt + ttftMs), so 9999/4.8 =
-  // 2083.1 tok/s — not the 1999.8 a naive 5000 ms divisor would give.
-  assert.equal(sa.agents[0].avgTps, 2083.1);
-  assert.equal(sa.outputTokens, 9999);
-  // Not running, and last completion is far in the past (fixture epoch ~1.3e6),
-  // so the surface is not active.
+// A parent conversation with two spawned children, plus a second conversation
+// with a child of its own (which must never be counted).
+//
+//   parent  sess_tree         1 main_turn request
+//   child   sess_tree_c1      spawned by sess_tree
+//   child   sess_tree_c2      spawned by sess_tree
+//   other   sess_other        a different conversation, child sess_other_c
+//
+// Child requests (all completed; `agent` names the spawning agent):
+//   c1  zcode-Explore           600 gen / 1000 ms = 600.0 tok/s
+//   c2  zcode-Explore           300 gen / 1000 ms = 300.0 tok/s
+//   c3  zcode-general-purpose   200 gen / 1000 ms = 200.0 tok/s
+//   c4  (compact, the child's own) 100 gen / 1000 ms = 100.0 tok/s
+//   c5  zcode-Explore, second child  50 gen / 1000 ms =  50.0 tok/s
+function treeFixture(label) {
+  const m = makeMachine(label);
+  const db = createDb(m);
+  addSession(db, "sess_tree", "Parent conversation");
+  addSession(db, "sess_tree_c1", "Explore child", { parentId: "sess_tree" });
+  addSession(db, "sess_tree_c2", "Explore child 2", { parentId: "sess_tree" });
+  addSession(db, "sess_other", "Another conversation");
+  addSession(db, "sess_other_c", "Someone else's child", { parentId: "sess_other" });
+
+  // The parent's own traffic: 200 generated over 1000 ms → 200.0 tok/s.
+  addRequest(db, {
+    sessionId: "sess_tree", id: "p1", genMs: 1000, ttftMs: 100, outputTokens: 200,
+    reasoningTokens: 0, inputTokens: 10_000, cacheRead: 4_000,
+  });
+
+  const sub = (sessionId, id, agent, o) =>
+    addRequest(db, {
+      sessionId, id, querySource: "subagent", agent, genMs: 1000, ttftMs: 100,
+      reasoningTokens: 0, inputTokens: 2_000, cacheRead: 0, ...o,
+    });
+  sub("sess_tree_c1", "c1", "zcode-Explore", { outputTokens: 500, reasoningTokens: 100, inputTokens: 8_000, cacheRead: 7_000 });
+  sub("sess_tree_c1", "c2", "zcode-Explore", { outputTokens: 300, inputTokens: 4_000 });
+  sub("sess_tree_c1", "c3", "zcode-general-purpose", { outputTokens: 200, inputTokens: 2_000, cacheRead: 1_000, ttftMs: 500 });
+  // The child's OWN compaction request: not `subagent`, but it ran inside a
+  // session this conversation spawned, so it is this conversation's usage.
+  addRequest(db, {
+    sessionId: "sess_tree_c1", id: "c4", querySource: "compact", genMs: 1000, ttftMs: 100,
+    outputTokens: 100, reasoningTokens: 0, inputTokens: 1_000, cacheRead: 0,
+  });
+  sub("sess_tree_c2", "c5", "zcode-Explore", { outputTokens: 50, inputTokens: 1_000, cacheRead: 500 });
+  // Another conversation's subagent: same shape, must never appear here.
+  sub("sess_other_c", "o1", "zcode-Explore", { outputTokens: 9_999, inputTokens: 9_999, cacheRead: 0 });
+  db.close();
+  return { m, path: m.dbPath };
+}
+
+test("subagent activity is attributed by the child session's parent link", () => {
+  const f = treeFixture("subagent-tree");
+  const dbh = openAt(f.path);
+  const sa = M.subagentActivity(dbh, "sess_tree");
+  // c1..c5 — and NOT o1, which is another conversation's child.
+  assert.equal(sa.requests, 5, "every request in the spawned sessions, and only those");
+  assert.equal(sa.sessions, 2, "both children of this session are counted");
+  assert.equal(sa.sessionId, "sess_tree");
+  // Rates: (600 + 300 + 200 + 100 + 50) / 5 samples = 250.0, peak 600.
+  assert.equal(sa.avgTps, 250);
+  assert.equal(sa.peakTps, 600);
+  // TTFT over the same rated samples: (100+100+500+100+100)/5 = 180.
+  assert.equal(sa.avgTtftMs, 180);
+  assert.equal(sa.generated, 1250, "500+100 + 300 + 200 + 100 + 50");
   assert.equal(sa.running, 0);
-  assert.equal(sa.active, false);
+  assert.equal(sa.active, false, "nothing ran in the last minute");
   dbh.close();
+  cleanup({ ...f.m, db: null });
 });
 
-test("the subagent surface stays separate from the session aggregate", () => {
-  const dbh = open();
-  const snap = M.sessionSnapshot(dbh, SID, { window: 10 });
-  // The session average is r1+r2+r3 only: (233.3+300+200)/3 = 244.4, with the
-  // subagent's 2083.1 EXCLUDED. If subagent rows ever leaked into the session
-  // scope this would jump, so it is the guard that the two surfaces stay apart.
-  assert.equal(snap.session.avgTps, 244.4);
-  assert.equal(snap.session.samples, 3);
-  // The subagent surface sees exactly the row the session dropped.
-  const sa = M.subagentActivity(dbh, 0);
-  assert.equal(sa.requests, 1);
-  assert.equal(sa.avgTps, 2083.1);
+test("the count is monotonic — it never falls as rows age out", () => {
+  // THE REVERSAL REGRESSION TEST. The surface used to report a machine-wide
+  // 15-minute window, so a card could read "91 reqs" and then "89 reqs" with no
+  // work undone (rows aged out), and after an idle stretch the first refresh
+  // dropped every expired row at once. These fixture rows completed in 1970 —
+  // decades outside any window a sane implementation would keep — and they are
+  // still counted, because the scope is the conversation's tree, not a clock.
+  const f = treeFixture("subagent-monotonic");
+  const before = (() => {
+    const dbh = openAt(f.path);
+    const sa = M.subagentActivity(dbh, "sess_tree", {});
+    dbh.close();
+    return sa;
+  })();
+  assert.equal(before.requests, 5, "old rows stay counted");
+  assert.equal(before.lastAt != null, true);
+  // A new child request completes: the count grows...
+  const wdb = new DatabaseSync(f.path);
+  addRequest(wdb, {
+    sessionId: "sess_tree_c1", id: "c6", querySource: "subagent", agent: "zcode-Explore",
+    genMs: 1000, ttftMs: 100, outputTokens: 10, reasoningTokens: 0, inputTokens: 100, cacheRead: 0,
+  });
+  wdb.close();
+  const dbh = openAt(f.path);
+  const after = M.subagentActivity(dbh, "sess_tree", {});
+  assert.equal(after.requests, 6);
+  assert.ok(after.requests >= before.requests, "the count only ever grows");
+  assert.notEqual(after.sig, before.sig, "the change signature moves when work lands");
   dbh.close();
+  cleanup({ ...f.m, db: null });
 });
 
-test("subagentActivity honours its time window", () => {
-  const dbh = open();
-  // The fixture row completes at ~1_305_000 (epoch ms — this is a 1970 date, on
-  // purpose). A window starting after it finds nothing; one before it finds it.
-  assert.equal(M.subagentActivity(dbh, 2_000_000).requests, 0, "a later window excludes the row");
-  assert.equal(M.subagentActivity(dbh, 1_000_000).requests, 1, "an earlier window includes it");
+test("the children's tokens fold into the session tree totals, with the split kept", () => {
+  const f = treeFixture("subagent-tokens");
+  const dbh = openAt(f.path);
+  const snap = M.sessionSnapshot(dbh, "sess_tree", { window: 10 });
+  const t = snap.session.tokens;
+  // Conversation only: cached 4000, uncached 10000-4000, output 200.
+  assert.equal(t.main.cached, 4_000);
+  assert.equal(t.main.uncached, 6_000);
+  assert.equal(t.main.output, 200);
+  assert.equal(t.main.total, 10_200);
+  assert.equal(t.main.cacheHitPct, 40);
+  // Children: input 8000+4000+2000+1000+1000 = 16000, cache_read 7000+0+1000+0+500
+  // = 8500, generated 1250 → total 17250, hit 8500/16000 = 53.1.
+  assert.equal(t.subagents.cached, 8_500);
+  assert.equal(t.subagents.uncached, 7_500);
+  assert.equal(t.subagents.output, 1_250);
+  assert.equal(t.subagents.total, 17_250);
+  assert.equal(t.subagents.cacheHitPct, 53.1);
+  // The tree is the sum of the two, and the share is measured on it.
+  assert.equal(t.total, 10_200 + 17_250);
+  assert.equal(t.cached, 12_500);
+  assert.equal(t.uncached, 13_500);
+  assert.equal(t.output, 1_450);
+  // Tree-wide cache hit: 12500 / 26000 = 48.076… → 48.1, against the
+  // conversation-only 40.0 the old build reported.
+  assert.equal(t.cacheHitPct, 48.1);
+  // 17250 / 27450 = 62.841… → 62.8
+  assert.equal(t.subagentSharePct, 62.8);
+  // The aggregate's own token sums are TREE-wide too, so the CLI, the MCP tool
+  // and the dashboard card cannot disagree with the card's panel above them.
+  // `outputTokens` is the raw output column and `reasoningTokens` its sibling,
+  // exactly as they read for a conversation-only session: 1150 + 200 and 100.
+  assert.equal(snap.session.outputTokens, 1_350);
+  assert.equal(snap.session.reasoningTokens, 100);
+  assert.equal(snap.session.outputTokens + snap.session.reasoningTokens, t.output);
+  assert.equal(snap.session.inputTokens, 26_000);
+  assert.equal(snap.session.cacheRead, 12_500);
   dbh.close();
+  cleanup({ ...f.m, db: null });
 });
 
-test("a running subagent reads as active and names its agent", () => {
-  // Its own machine: a RUNNING subagent cannot come from the completed scan, and
-  // isolating it keeps the shared fixture's assertions above undisturbed.
-  const m2 = makeMachine("subagent-running");
-  const db2 = createDb(m2);
-  addSession(db2, "sess_sa", "Subagent running");
-  addRunningRequest(db2, { sessionId: "sess_sa", id: "run_sub", querySource: "subagent", agent: "zcode-Explore" });
-  db2.close();
-  const dbh = openAt(m2.dbPath);
-  const sa = M.subagentActivity(dbh, Date.now() - 60_000);
-  assert.equal(sa.running, 1, "the running subagent is counted");
+test("the conversation's own rates stay free of the children's streams", () => {
+  // The split above is additive, never a merge: the human-facing rate figures
+  // describe the conversation's own requests only, so parallel subagent streams
+  // cannot make the session average jump around.
+  const f = treeFixture("subagent-rates");
+  const dbh = openAt(f.path);
+  const snap = M.sessionSnapshot(dbh, "sess_tree", { window: 10 });
+  assert.equal(snap.session.samples, 1, "one composer request, five children");
+  assert.equal(snap.session.requests, 1);
+  assert.equal(snap.session.avgTps, 200, "the parent's own rate, untouched by the children");
+  assert.equal(snap.last.id, "p1");
+  assert.equal(snap.window.samples, 1);
+  // The block itself is a top-level surface, not a copy inside `session`.
+  assert.ok(snap.subagents, "the card's last band reads this");
+  assert.equal(snap.subagents.sessionId, "sess_tree");
+  dbh.close();
+  cleanup({ ...f.m, db: null });
+});
+
+test("the model mix covers the tree and says how much came from subagents", () => {
+  const f = treeFixture("subagent-models");
+  const dbh = openAt(f.path);
+  const snap = M.sessionSnapshot(dbh, "sess_tree", { window: 10 });
+  const models = snap.session.models;
+  assert.equal(models.length, 1, "one model across parent and children");
+  assert.equal(models[0].requests, 6, "1 conversation + 5 tree");
+  assert.equal(models[0].subagentRequests, 5);
+  // Generated: parent 200 + children 1250 (the donut's slices must sum to the
+  // token total the card shows above them).
+  assert.equal(models[0].generated, 1_450);
+  assert.equal(models[0].share, 100);
+  // The rate is weighted over the tree's rated samples, not averaged per group:
+  // (200 + 600+300+200+100+50) / 6 = 241.666… → 241.7
+  assert.equal(models[0].avgTps, 241.7);
+  dbh.close();
+  cleanup({ ...f.m, db: null });
+});
+
+test("agents and models of the tree are grouped and ranked", () => {
+  const f = treeFixture("subagent-agents");
+  const dbh = openAt(f.path);
+  const sa = M.subagentActivity(dbh, "sess_tree");
+  assert.equal(sa.agents.length, 3, "two named agents plus the child's own compact request");
+  // Ranked by request count, then by name.
+  assert.deepEqual(sa.agents, [
+    { agent: "zcode-Explore", requests: 3, generated: 950 },
+    { agent: "subagent", requests: 1, generated: 100 },
+    { agent: "zcode-general-purpose", requests: 1, generated: 200 },
+  ]);
+  assert.equal(sa.models.length, 1);
+  assert.equal(sa.models[0].model, "deepseek-v4.1-flash:cloud");
+  assert.equal(sa.models[0].requests, 5);
+  // The child's own compact request carries output tokens too, and it is part of
+  // this conversation's tree usage: 500 + 300 + 200 + 100 + 50.
+  assert.equal(sa.models[0].outputTokens, 1_150);
+  assert.equal(sa.models[0].reasoningTokens, 100);
+  // The per-model rate sum and its sample count travel with the group so the
+  // merged mix can weight them exactly instead of averaging averages.
+  assert.equal(sa.models[0].rateSum, 1_250);
+  assert.equal(sa.models[0].rated, 5);
+  dbh.close();
+  cleanup({ ...f.m, db: null });
+});
+
+test("a subagent that is running right now is attributable too", () => {
+  // The child session exists from the moment it is spawned, so a live subagent
+  // needs no completed row to be named.
+  const f = treeFixture("subagent-running");
+  const wdb = new DatabaseSync(f.path);
+  addRunningRequest(wdb, { sessionId: "sess_tree_c1", id: "run_sub", querySource: "subagent", agent: "zcode-Explore" });
+  wdb.close();
+  const dbh = openAt(f.path);
+  const sa = M.subagentActivity(dbh, "sess_tree");
+  assert.equal(sa.running, 1, "the in-flight child request is counted");
   assert.equal(sa.active, true, "a running subagent makes the surface active");
   assert.deepEqual(sa.runningAgents, ["zcode-Explore"]);
+  assert.equal(sa.requests, 5, "and it is not counted as completed work");
   dbh.close();
-  cleanup({ ...m2, db: null });
+  cleanup({ ...f.m, db: null });
 });
 
-test("subagentActivity groups by agent and ranks them by volume", () => {
-  const m3 = makeMachine("subagent-agents");
-  const db3 = createDb(m3);
-  addSession(db3, "sess_g", "Grouped");
-  const now = Date.now();
-  // Two requests for zcode-Explore, one for zcode-general-purpose.
-  addRequest(db3, { sessionId: "sess_g", id: "g1", querySource: "subagent", agent: "zcode-Explore",
-    outputTokens: 500, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 2000, startedAt: now - 3000 });
-  addRequest(db3, { sessionId: "sess_g", id: "g2", querySource: "subagent", agent: "zcode-Explore",
-    outputTokens: 300, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 1000, startedAt: now - 2000 });
-  addRequest(db3, { sessionId: "sess_g", id: "g3", querySource: "subagent", agent: "zcode-general-purpose",
-    outputTokens: 100, reasoningTokens: 0, genMs: 1000, ttftMs: 100, completedAt: now - 500, startedAt: now - 1500 });
-  db3.close();
-  const dbh = openAt(m3.dbPath);
-  const sa = M.subagentActivity(dbh, now - 60_000);
-  assert.equal(sa.requests, 3, "all three subagent rows are inside the window");
-  assert.equal(sa.agents.length, 2, "two distinct agents");
-  // Ranked by request count: Explore (2) before general-purpose (1).
-  assert.equal(sa.agents[0].agent, "zcode-Explore");
-  assert.equal(sa.agents[0].requests, 2);
-  assert.equal(sa.agents[1].agent, "zcode-general-purpose");
-  assert.equal(sa.agents[1].requests, 1);
-  // A completion landed within the last minute, so the surface is active.
-  assert.equal(sa.active, true);
+test("the subagent aggregate is cached on its own change signature", () => {
+  const f = treeFixture("subagent-cache");
+  const dbh = openAt(f.path);
+  const cache = {};
+  const first = M.subagentActivity(dbh, "sess_tree", cache);
+  const again = M.subagentActivity(dbh, "sess_tree", cache);
+  assert.equal(again, first, "an unchanged tree reuses the previous aggregate object");
+  // A completed child request moves the signature, so the group-bys re-run.
+  const wdb = new DatabaseSync(f.path);
+  addRequest(wdb, {
+    sessionId: "sess_tree_c2", id: "c7", querySource: "subagent", agent: "zcode-Explore",
+    genMs: 1000, ttftMs: 100, outputTokens: 5, reasoningTokens: 0, inputTokens: 10, cacheRead: 0,
+  });
+  wdb.close();
+  const moved = M.subagentActivity(dbh, "sess_tree", cache);
+  assert.notEqual(moved, first);
+  assert.equal(moved.requests, 6);
   dbh.close();
-  cleanup({ ...m3, db: null });
+  cleanup({ ...f.m, db: null });
+});
+
+test("a session with no spawned children reports nothing, not an error", () => {
+  const dbh = open();
+  const sa = M.subagentActivity(dbh, "sess_m");
+  assert.equal(sa.requests, 0);
+  assert.equal(sa.sessions, 0);
+  assert.equal(sa.tokens.total, 0);
+  assert.equal(sa.tokens.cacheHitPct, null);
+  assert.equal(sa.avgTps, null);
+  assert.equal(sa.active, false);
+  assert.deepEqual(sa.agents, []);
+  dbh.close();
+});
+
+test("an older database without a session table yields no subagent activity", () => {
+  // The parent link lives in the `session` table; a DB predating it must not
+  // throw into the snapshot path, it must simply report no children.
+  const m4 = makeMachine("subagent-old");
+  const db4 = new DatabaseSync(m4.dbPath);
+  db4.exec(
+    "CREATE TABLE model_usage (id text primary key, session_id text, turn_id text, query_source text," +
+    " provider_id text, model_id text, agent text, status text, started_at integer, first_token_at integer," +
+    " completed_at integer, duration_ms integer, time_to_first_token_ms integer, input_tokens integer," +
+    " output_tokens integer, reasoning_tokens integer, cache_read_input_tokens integer," +
+    " cache_creation_input_tokens integer, finish_reason text, error_type text);" +
+    // The index the session-scoped queries pin, so the snapshot path itself runs.
+    " CREATE INDEX model_usage_session_turn_idx on model_usage(session_id, turn_id)"
+  );
+  db4.close();
+  const dbh = openAt(m4.dbPath);
+  const sa = M.subagentActivity(dbh, "sess_tree");
+  assert.equal(sa.requests, 0);
+  assert.equal(sa.sessions, 0);
+  assert.equal(sa.tokens.total, 0);
+  const snap = M.sessionSnapshot(dbh, "sess_tree", { window: 10 });
+  assert.equal(snap.subagents.requests, 0, "the snapshot survives too");
+  dbh.close();
+  cleanup({ ...m4, db: null });
+});
+
+test("a global (session-less) aggregate has no tree to fold in", () => {
+  const dbh = open();
+  const rows = M.sessionRequests(dbh, null);
+  const agg = M.sessionAggregateFrom(rows, { usage: rows, subagents: null });
+  assert.equal(agg.tokens.subagents.total, 0);
+  assert.equal(agg.tokens.subagentSharePct, null);
+  assert.equal(agg.tokens.total, agg.tokens.main.total);
+  dbh.close();
 });

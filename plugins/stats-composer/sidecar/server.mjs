@@ -210,15 +210,12 @@ function refreshSnapshot(force) {
     try {
       snap.turns = metrics.turnTotals(db, snap.sessionId);
     } catch { /* older DB without turn_usage: leave it absent */ }
-    // Subagent activity — a SEPARATE surface, never merged into the session
-    // figures above. Subagent requests live in their own sessions and cannot be
-    // linked to a parent turn (see metrics.subagentActivity for the evidence),
-    // so this reports the last 15 minutes machine-wide. It rides the same
-    // DB-change gate as everything else here, so it adds no hot-path query on a
-    // tick where nothing landed.
-    try {
-      snap.subagents = metrics.subagentActivity(db);
-    } catch { /* leave absent on an older DB */ }
+    // Subagent activity — the sessions this conversation spawned, found through
+    // their `parent_id` link, so the block is scoped to THIS conversation and
+    // its tokens are part of the session totals the card shows. Computed inside
+    // sessionSnapshot (one indexed aggregate set, no row read) and carried on
+    // the snapshot as `subagents`; it rides the same DB-change gate as
+    // everything else, so a tick where nothing landed costs nothing.
     snap.plugin = { name: "stats-composer", version: VERSION };
     SNAP = snap;
     SNAP_ERR = null;
@@ -443,7 +440,7 @@ try {
   }
 </style></head><body>
 <h1><svg class="logo" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M13 2 4.5 13.2h6L11 22l8.5-11.2h-6z" fill="var(--accent)"/></svg> Session statistics</h1>
-<div class="sub">ZCode · stats-composer · read-only on the usage DB, cannot affect the running client · newest request first · click a column header to toggle its sort</div>
+<div class="sub">ZCode · stats-composer · read-only on the usage DB, cannot affect the running client · newest request first · session token totals include the subagents this session spawned · click a column header to toggle its sort</div>
 <div class="bar">
   <span class="badge" id="refreshBadge">
     <button id="toggleAuto" title="Toggle auto-refresh (updates in place, never reloads the page)">
@@ -550,7 +547,11 @@ function renderModels(models){
   legend.innerHTML = list.map((m, i) => {
     const share = totalGen > 0 ? (m.generated / totalGen) * 100 : 0;
     const name = m.model || '(unknown)';
-    return '<div class="lrow" title="'+name+' · '+m.requests+' requests · avg '+((m.avgTps==null)?'—':m.avgTps)+' tok/s">' +
+    // The share basis is the session tree (the conversation plus what it
+    // spawned), so the tip says how much of a model's traffic came from
+    // subagents — otherwise a large slice can look like the composer's own work.
+    const sub = m.subagentRequests ? ' · ' + m.subagentRequests + ' of them subagents' : '';
+    return '<div class="lrow" title="'+name+' · '+m.requests+' requests'+sub+' · avg '+((m.avgTps==null)?'—':m.avgTps)+' tok/s">' +
       '<span class="sw" style="background:'+PALETTE[i % PALETTE.length]+'"></span>' +
       '<span class="nm">'+name+' <span class="tk">'+tokN(m.generated)+' tok · '+m.requests+' req</span></span>' +
       '<span class="pc">'+share.toFixed(1)+'%</span></div>';
@@ -586,7 +587,13 @@ async function tick(manual){
       card('Latest request tok/s', last ? (last.tokPerSec ?? '—') : '—', last ? last.model : '', last?'':'No completed requests yet'),
       card('Latest request TTFT', last ? ms(last.ttftMs) : '—', 'time to first token'),
       card('Last '+(w?.window||10)+' average', w?.avgTps ?? '—', 'peak '+(w?.peakTps ?? '—')+' tok/s'),
-      card('Session output tok', ss ? (ss.outputTokens+ss.reasoningTokens) : '—', ss? (ss.samples+' samples · avg '+(ss.avgTps??'—')+' tok/s') : ''),
+      // The session's token total, exactly as the hover card's token panel
+      // reports it: the conversation's requests plus everything the sessions it
+      // spawned ran, with the subagent share in the caption so the headline
+      // figure is never a scope the reader has to guess.
+      card('Session tokens', ss && ss.tokens ? tokN(ss.tokens.total) : '—',
+        ss ? (ss.samples+' samples · avg '+(ss.avgTps??'—')+' tok/s' +
+          (ss.tokens && ss.tokens.subagentSharePct ? ' · '+ss.tokens.subagentSharePct+'% subagents' : '')) : ''),
     ].join('');
     renderModels(ss && ss.models);
     document.querySelectorAll('#tbl th').forEach(th => {

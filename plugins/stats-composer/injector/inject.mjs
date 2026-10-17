@@ -156,7 +156,7 @@ const PILL_JS_TEMPLATE = `
   // instead of the idempotence check answering 'already' and leaving the old
   // layout on screen until a reload.
   var LAYOUT = '__CARD_LAYOUT__';
-  var VERSION = '40-' + LAYOUT;
+  var VERSION = '41-' + LAYOUT;
   var EPOCH = Math.random().toString(36).slice(2, 10);
   const SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
   // The sidecar port is part of the generation identity. A generation left
@@ -258,26 +258,32 @@ const PILL_JS_TEMPLATE = `
     '</div>' +
     '<div class="cdiv"></div>' +
     // Session token panel, the same figures as the app's own "Token usage"
-    // card (image 1). The divider above is the one that "already exists".
+    // card (image 1) — for the WHOLE SESSION: the conversation's own requests
+    // (main_turn plus its compaction/title requests) AND everything the
+    // subagent sessions it spawned ran, which the app's own panel omits. The
+    // "Subagent share" row below states the split, so the total is never a
+    // number the reader has to guess the scope of.
     '<div class="crows">' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Token usage</span><span class="cv v-toktotal">—</span></div>' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Cache hit</span><span class="cv v-cachehit">—</span></div>' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Uncached input</span><span class="cv v-uncached">—</span></div>' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Cached input</span><span class="cv v-cached">—</span></div>' +
       '<div class="cr g3"><span class="cd"></span><span class="cl">Output</span><span class="cv v-output">—</span></div>' +
+      // Shown only when the tree has subagent usage, because only then is
+      // there anything to divide.
+      '<div class="cr g3 v-subsharerow" style="display:none"><span class="cd"></span><span class="cl">Subagent share</span><span class="cv v-subshare">—</span></div>' +
     '</div>' +
     '<div class="cfoot"><span class="cl">Average session rate</span><span class="cv c-avg">—</span></div>' +
-    // Subagent activity — a SEPARATE block, last in the card and behind its own
-    // divider, because it is NOT part of the session figures above. Subagent
-    // requests live in their own sessions and cannot be linked to a parent turn,
-    // so this is a machine-wide time window ("subagents that ran in the last
-    // 15 minutes"), never folded into the averages. Hidden entirely when there
-    // is no such activity, so the card is unchanged for users who never spawn
-    // subagents.
+    // Subagent activity — the sessions THIS conversation spawned (attributed by
+    // session.parent_id), so the block belongs to the conversation being read
+    // and its tokens are part of the totals above rather than a separate,
+    // machine-wide window. Hidden entirely when the session has no subagents, so
+    // the card is unchanged for users who never spawn any.
     '<div class="csub" style="display:none">' +
       '<div class="cdiv"></div>' +
       '<div class="crows">' +
-        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagents · last 15 min</span><span class="cv v-subcount">—</span></div>' +
+        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagents · this session</span><span class="cv v-subcount">—</span></div>' +
+        '<div class="cr g5"><span class="cd"></span><span class="cl">Subagent tokens</span><span class="cv v-subtokens">—</span></div>' +
         '<div class="cr g5"><span class="cd"></span><span class="cl">Subagent rate</span><span class="cv v-subtps">—</span></div>' +
         '<div class="cr g5"><span class="cd"></span><span class="cl">Subagent TTFT</span><span class="cv v-subttft">—</span></div>' +
       '</div>' +
@@ -777,12 +783,14 @@ const PILL_JS_TEMPLATE = `
     setText(v('.v-turns'), tt && tt.turns != null ? String(tt.turns) : '—');
     setText(v('.v-steps'), tt && tt.steps != null ? String(tt.steps) : '—');
     setText(v('.v-toolcalls'), tt && tt.toolCalls != null ? String(tt.toolCalls) : '—');
-    // Subagent activity — a machine-wide time window, deliberately kept apart
-    // from every session figure. Filled BEFORE the "no session" guard below
-    // because it does not depend on the session at all: a subagent can be running while the
-    // composer shows a fresh draft chat with no requests of its own. Shown only
-    // when subagents actually ran, so the card is byte-identical for the
-    // majority of users who never spawn any.
+    // Subagent activity — the sessions THIS conversation spawned. Scoped to the
+    // session (via the child sessions' parent_id), so the count only ever
+    // grows, it never reports another chat's agents, and its tokens are already
+    // inside the token panel above. Filled BEFORE the "no session" guard below
+    // because it does not depend on the composer's own figures: a session whose
+    // only work so far was delegated has subagent figures and no composer ones.
+    // Shown only when the session actually spawned a subagent, so the card is
+    // byte-identical for users who never do.
     const sa = snap.subagents;
     const sub = c.querySelector('.csub');
     if (sub) {
@@ -794,6 +802,7 @@ const PILL_JS_TEMPLATE = `
           ? 'running now'
           : (kinds.length === 1 ? kinds[0] : (kinds.length > 1 ? kinds.length + ' agents' : 'subagent'));
         setText(v('.v-subcount'), (sa.requests || 0) + ' req' + (sa.requests === 1 ? '' : 's') + ' · ' + who);
+        setText(v('.v-subtokens'), sa.tokens && sa.tokens.total ? fmtTok(sa.tokens.total) : '—');
         setText(v('.v-subtps'), sa.avgTps != null ? sa.avgTps + ' tok/s' : '—');
         setText(v('.v-subttft'), sa.avgTtftMs != null ? fmtMs(sa.avgTtftMs) : '—');
       }
@@ -812,13 +821,23 @@ const PILL_JS_TEMPLATE = `
       v('.v-toolt'),
       ss.toolBusyMs != null ? fmtDur(ss.toolBusyMs) : (ss.otherMs != null ? fmtDur(ss.otherMs) : '—')
     );
-    // Session token panel — the app's own "Token usage" figures.
+    // Session token panel — the app's own "Token usage" figures, for the whole
+    // session: the conversation's requests plus its compact/title requests,
+    // plus everything the sessions it spawned ran. When subagents contributed,
+    // the share row says how much of the total they are, so the panel is neither
+    // silently short (the old main_turn-only scope) nor silently inflated.
     const tk = ss.tokens || {};
     setText(v('.v-toktotal'), tk.total != null ? fmtTok(tk.total) : '—');
     setText(v('.v-cachehit'), tk.cacheHitPct != null ? tk.cacheHitPct + '%' : '—');
     setText(v('.v-uncached'), tk.uncached != null ? fmtTok(tk.uncached) : '—');
     setText(v('.v-cached'), tk.cached != null ? fmtTok(tk.cached) : '—');
     setText(v('.v-output'), tk.output != null ? fmtTok(tk.output) : '—');
+    const shareRow = c.querySelector('.v-subsharerow');
+    if (shareRow) {
+      const shares = tk.subagentSharePct != null && tk.subagentSharePct > 0;
+      shareRow.style.display = shares ? '' : 'none';
+      if (shares) setText(v('.v-subshare'), tk.subagentSharePct + '%');
+    }
     setText(v('.c-avg'), ss.avgTps != null ? ss.avgTps + ' tok/s' : '—');
   }
 

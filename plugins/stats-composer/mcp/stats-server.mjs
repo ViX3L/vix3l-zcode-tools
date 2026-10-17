@@ -37,7 +37,7 @@ const TOOLS = [
   {
     name: "request_stats",
     description:
-      "Per-request TPS (output tok/s) and TTFT (time-to-first-token) stats from ZCode's usage DB: latest request, last-N window average/peak, and per-turn aggregate. Works for every provider including custom endpoints.",
+      "Per-request TPS (output tok/s) and TTFT (time-to-first-token) stats from ZCode's usage DB: latest request, last-N window average/peak, and per-turn aggregate. Also reports the session's token accounting (total / cached / uncached / output, cache-hit %) including the subagents the session spawned, and that subagent activity separately. Works for every provider including custom endpoints.",
     inputSchema: {
       type: "object",
       properties: {
@@ -98,7 +98,27 @@ function toolRequestStats(args) {
     if (snap.last) lines.push(`last: ${metrics.formatLine(snap.last)}`);
     if (snap.live?.streaming) lines.push(`live: streaming now (est ${snap.live.estTps ?? "?"} tok/s)`);
     if (snap.window?.samples) lines.push(`window(${snap.window.window}): avg ${snap.window.avgTps} tok/s · peak ${snap.window.peakTps} tok/s · avg TTFT ${snap.window.avgTtftMs ?? "?"} ms`);
-    if (snap.session) lines.push(`session: ${snap.session.samples} samples · avg ${snap.session.avgTps ?? "—"} tok/s`);
+    if (snap.session) {
+      const tk = snap.session.tokens || {};
+      lines.push(
+        `session: ${tk.total ?? 0} tokens (${tk.cached ?? 0} cached / ${tk.uncached ?? 0} uncached / ${tk.output ?? 0} output)` +
+          ` · cache hit ${tk.cacheHitPct ?? "—"}% · ${snap.session.samples} samples · avg ${snap.session.avgTps ?? "—"} tok/s`
+      );
+      if (tk.subagentSharePct) lines.push(`  of which subagents: ${tk.subagentSharePct}%`);
+    }
+    // Subagent activity belongs to THIS session (attributed through the child
+    // sessions' parent link), so it explains part of the totals above rather
+    // than being a separate, machine-wide window.
+    const sa = snap.subagents;
+    if (sa && (sa.requests || sa.running)) {
+      lines.push(
+        `subagents: ${sa.requests} request${sa.requests === 1 ? "" : "s"}` +
+          (sa.running ? ` (${sa.running} running now)` : "") +
+          ` · ${sa.generated ?? 0} generated tok · cache hit ${sa.tokens?.cacheHitPct ?? "—"}%` +
+          ` · avg ${sa.avgTps ?? "—"} tok/s · avg TTFT ${sa.avgTtftMs ?? "—"} ms` +
+          (sa.agents?.length ? ` · ${sa.agents.map((a) => a.agent + "×" + a.requests).join(", ")}` : "")
+      );
+    }
     if (recent.length) {
       lines.push("recent:");
       for (const r of recent) lines.push(`  - ${metrics.formatLine(r)}`);

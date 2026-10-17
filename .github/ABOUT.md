@@ -61,8 +61,8 @@ tag. Two tag shapes are supported:
 
 | Tag | Releases |
 |---|---|
-| `v0.1.18` | every plugin, each at its current manifest version |
-| `stats-composer-v0.1.18` | only `stats-composer` |
+| `v0.1.19` | every plugin, each at its current manifest version |
+| `stats-composer-v0.1.19` | only `stats-composer` |
 | `usage-context-v0.1.2` | only `usage-context` |
 
 The tag's version must equal the version in the plugin's
@@ -78,12 +78,12 @@ changelog section, commit, then push the tag. For example, for `stats-composer`:
 
 ```sh
 # edit plugins/stats-composer/.zcode-plugin/plugin.json,
-#      marketplace.json, plugins/marketplace.json  → 0.1.18
-#      plugins/stats-composer/CHANGELOG.md         → add "## [0.1.18] - <date>"
-git add -A && git commit -m "release: stats-composer 0.1.18"
+#      marketplace.json, plugins/marketplace.json  → 0.1.19
+#      plugins/stats-composer/CHANGELOG.md         → add "## [0.1.19] - <date>"
+git add -A && git commit -m "release: stats-composer 0.1.19"
 git push
-git tag stats-composer-v0.1.18
-git push origin stats-composer-v0.1.18
+git tag stats-composer-v0.1.19
+git push origin stats-composer-v0.1.19
 ```
 
 The workflow runs the full test suite first, so a tag cannot publish a build

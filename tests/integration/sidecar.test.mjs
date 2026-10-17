@@ -38,11 +38,13 @@ before(async () => {
     totalTokens: 25_500, durationMs: 10_000, steps: 4, toolCalls: 2 });
   addTool(db, { sessionId: SID, turnId: "turn_a", durationMs: 2_000 });
   addRunningRequest(db, { sessionId: SID, id: "s_live", turnId: "turn_live", startedAt: Date.now() - 900 });
-  // Subagent activity for the separate surface: a subagent request in its OWN
-  // session (as ZCode writes them), completed just now so /stats reports the
-  // surface as active. It must appear under `subagents` and must NOT move any
-  // session figure asserted below.
-  addSession(db, "sess_subagent_agent_test", "Subagent");
+  // Subagent activity: a subagent request in its OWN session (as ZCode writes
+  // them), and that session names THIS conversation as its parent — the link the
+  // plugin attributes the whole tree by. Completed just now, so /stats reports
+  // the surface as active. It must appear under `subagents`, its tokens must be
+  // part of the session's token totals, and it must NOT move a single rate
+  // figure asserted below.
+  addSession(db, "sess_subagent_agent_test", "Subagent", { parentId: SID });
   addRequest(db, {
     sessionId: "sess_subagent_agent_test", id: "s_sub_1", turnId: "turn_sub",
     querySource: "subagent", agent: "zcode-Explore",
@@ -100,20 +102,33 @@ test("/stats returns the pill's snapshot without the dashboard table", async () 
   assert.equal(s.lastTurn, undefined);
 });
 
-test("/stats exposes subagent activity as its own block, separate from the session", async () => {
+test("/stats attributes this conversation's subagents and folds their tokens in", async () => {
   const s = (await sidecar.get("/stats")).json;
-  // The subagent surface is present and sees the subagent row...
+  // The surface is present and sees the subagent row, because the child session
+  // names this conversation as its parent...
   assert.ok(s.subagents, "the subagent block must be present");
+  assert.equal(s.subagents.sessionId, SID);
   assert.equal(s.subagents.requests, 1);
+  assert.equal(s.subagents.sessions, 1);
   assert.equal(s.subagents.agents.length, 1);
   assert.equal(s.subagents.agents[0].agent, "zcode-Explore");
   // ...completed 100 ms ago, so the surface reads as active.
   assert.equal(s.subagents.active, true);
-  // The session's OWN figures must not have absorbed it. Two independent guards
-  // keep it out — the subagent row lives in its own session, and the session
-  // scope is main_turn-only — so this pins that neither ever regresses to
-  // folding subagent traffic into the composer's numbers.
-  assert.equal(s.session.samples, 25, "the subagent row must stay out of the session aggregate");
+  // Its tokens are part of the session's totals — 5000 uncached input + 1000
+  // output — and the split says where they came from. The conversation's own 25
+  // requests carry 25x1000 input and 5500 output = 30,500 tok, so the tree is
+  // 36,500 and the children are 6000/36500 = 16.4 % of it.
+  assert.equal(s.subagents.tokens.total, 6_000);
+  assert.equal(s.session.tokens.subagents.total, 6_000);
+  assert.equal(s.session.tokens.main.total, 30_500);
+  assert.equal(s.session.tokens.total, 36_500);
+  assert.equal(s.session.tokens.subagentSharePct, 16.4);
+  assert.equal(s.session.outputTokens, 5_500 + 1_000, "the aggregate's own sums are tree-wide too");
+  // The conversation's OWN rate figures must not have absorbed it: the session
+  // scope is the composer's main_turn rows, so a parallel subagent stream can
+  // never make "how fast is my conversation running" jump around.
+  assert.equal(s.session.samples, 25, "the subagent row must stay out of the rate samples");
+  assert.equal(s.session.requests, 25);
 });
 
 test("/stats.json is an alias", async () => {

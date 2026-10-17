@@ -135,7 +135,11 @@ test("the card's token panel matches the app's own decomposition", async () => {
   const page = await pillPage();
   await settled(page);
   await hover(page, ".zcode-stats-pill-host");
-  assert.equal(await deepText(page, ".cardp .v-toktotal"), "20,000 tok");
+  // The panel is cached + uncached + output, exactly as the app decomposes it.
+  // For a session that spawned nothing (this snapshot) the figure is the
+  // conversation's own; when subagents contributed, the same total carries
+  // theirs, with the share row stating how much (tests/ui/subagents.test.mjs).
+  assert.equal(await deepText(page, ".cardp .v-toktotal"), "32,000 tok");
   assert.equal(await deepText(page, ".cardp .v-cachehit"), "40%");
   assert.equal(await deepText(page, ".cardp .v-uncached"), "18,000 tok");
   assert.equal(await deepText(page, ".cardp .v-cached"), "12,000 tok");

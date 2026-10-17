@@ -16,7 +16,16 @@ export function sampleSnapshot(over = {}) {
   const session = {
     samples: 3, requests: 3, avgTps: 240.5, peakTps: 310.1, avgTtftMs: 420,
     outputTokens: 1800, reasoningTokens: 200, inputTokens: 30000, cacheRead: 12000,
-    tokens: { total: 20000, cached: 12000, uncached: 18000, output: 2000, cacheHitPct: 40 },
+    // Self-consistent, exactly as metrics.sessionAggregateFrom builds it:
+    // total = cached + uncached + output, and the hit rate is cached/(cached +
+    // uncached). This session spawned nothing, so `main` and the tree agree and
+    // `subagentSharePct` is null (which is what keeps the share row hidden).
+    tokens: {
+      total: 32000, cached: 12000, uncached: 18000, output: 2000, cacheHitPct: 40,
+      main: { total: 32000, cached: 12000, uncached: 18000, output: 2000, cacheHitPct: 40 },
+      subagents: { total: 0, cached: 0, uncached: 0, output: 0, cacheHitPct: null },
+      subagentSharePct: null,
+    },
     spanMs: 600000, busyMs: 400000, otherMs: 200000, requestBusyMs: 420000,
     toolBusyMs: 91000, toolCount: 7, toolErrorCount: 1,
     models: [
@@ -48,26 +57,37 @@ export function sampleSnapshot(over = {}) {
   };
 }
 
-// A subagent-activity block shaped like metrics.subagentActivity's return.
+// A subagent-activity block shaped like metrics.subagentActivity's return: the
+// sessions THIS conversation spawned, attributed through the child sessions'
+// parent link. The numbers are internally consistent — 6000 cached + 2500
+// uncached + 500 output = the 9000 total, and the agents' generated tokens sum
+// to that same 500.
 export function sampleSubagents(over = {}) {
   return {
-    sinceTs: Date.now() - 15 * 60 * 1000,
+    sessionId: over.sessionId ?? "sess_test_0001",
+    // The change signature the sidecar caches on: requests : last completion :
+    // running. It only moves forward, and only when real work lands.
+    sig: "12:0:0",
+    sessions: 2,
     active: true,
     running: 0,
     runningAgents: [],
     requests: 12,
-    sessions: 2,
     avgTps: 88.4,
     peakTps: 210.5,
     avgTtftMs: 1450,
-    outputTokens: 9000,
+    inputTokens: 8500,
+    outputTokens: 500,
+    reasoningTokens: 0,
+    cacheRead: 6000,
+    generated: 500,
+    tokens: { total: 9000, cached: 6000, uncached: 2500, output: 500, cacheHitPct: 70.6 },
     lastAt: Date.now() - 30_000,
     agents: [
-      { agent: "zcode-Explore", requests: 10, sessions: 1, avgTps: 80.1, peakTps: 210.5,
-        avgTtftMs: 1500, outputTokens: 8000, lastAt: Date.now() - 30_000 },
-      { agent: "zcode-general-purpose", requests: 2, sessions: 1, avgTps: 130.2, peakTps: 150,
-        avgTtftMs: 1200, outputTokens: 1000, lastAt: Date.now() - 60_000 },
+      { agent: "zcode-Explore", requests: 10, generated: 400 },
+      { agent: "zcode-general-purpose", requests: 2, generated: 100 },
     ],
+    models: [],
     ...over,
   };
 }

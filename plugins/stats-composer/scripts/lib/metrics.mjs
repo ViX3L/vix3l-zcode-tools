@@ -9,6 +9,12 @@
 //
 // Rows whose id starts with "usage_model_subagent_" belong to subagent
 // requests; main composer requests use query_source='main_turn'.
+//
+// A session's own rows are its composer requests (`main_turn`), plus the
+// compaction (`compact`) and title (`session_title`) requests it fires — all of
+// which ZCode counts in that session's own usage. Subagent requests live in
+// separate child sessions that name this one as their parent; see the
+// "session tree" section at the bottom for how they are attributed.
 
 process.removeAllListeners("warning");
 process.on("warning", () => {});
@@ -119,6 +125,31 @@ const SELECT =
   " cache_creation_input_tokens, query_source, finish_reason, error_type" +
   " FROM model_usage";
 
+// Shared token arithmetic, defined once. Three layers need the same numbers —
+// the SQL-tier aggregates (which can only SUM columns), the JS row path, and
+// the per-turn layer — and four copies of the formula is exactly how a "cache
+// hit" on the hover card drifts away from the same figure in the dashboard.
+//   cached   = cache_read_input_tokens
+//   uncached = input_tokens - cache_read_input_tokens
+//   output   = output_tokens + reasoning_tokens
+//   total    = cached + uncached + output   (equals computed_total_tokens)
+// cache_creation_input_tokens is deliberately NOT used as the uncached figure:
+// it is 0 in practice and does not equal `input - cache_read` (verified against
+// live rows).
+const tokenDecomp = ({ input = 0, cacheRead = 0, output = 0, reasoning = 0 }) => {
+  const cached = cacheRead;
+  const uncached = Math.max(0, input - cached);
+  const out = output + reasoning;
+  return { cached, uncached, output: out, total: cached + uncached + out };
+};
+
+// cacheHitPct = cached / (cached + uncached) to one decimal, null with no input.
+const pct = (cached, uncached) =>
+  cached + uncached > 0 ? Math.round((cached / (cached + uncached)) * 1000) / 10 : null;
+
+// One-decimal rounding that passes null/NaN through (rates, averages, shares).
+const round1 = (v) => (v == null || Number.isNaN(v) ? null : Math.round(v * 10) / 10);
+
 // One model request (one row): the unit of "per request" stats.
 //
 // Two quality tiers of rate:
@@ -164,9 +195,9 @@ function toRow(r) {
     cacheWrite: r.cache_creation_input_tokens ?? 0,
     genMs: genMs ?? (fallbackValid ? fallbackMs : null),
     tokPerSec: valid
-      ? Math.round(((rateTokens / genMs) * 1000 * 10)) / 10
+      ? round1((rateTokens / genMs) * 1000)
       : fallbackValid
-        ? Math.round(((tok / fallbackMs) * 1000 * 10)) / 10
+        ? round1((tok / fallbackMs) * 1000)
         : null,
     startedAt: r.started_at,
     completedAt: r.completed_at,
@@ -196,6 +227,38 @@ function scopeRows(db, sid) {
   const rows = (sid ? db.prepare(sql).all(sid) : db.prepare(sql).all()).map(toRow);
   const main = rows.filter((r) => r.querySource === "main_turn");
   return main.length ? main : rows;
+}
+
+// The session's USAGE rows: every completed model request the conversation
+// itself fired — `main_turn` plus the compaction (`compact`) and title
+// (`session_title`) requests — which is the set ZCode's own per-session
+// accounting covers. Subagent requests are excluded here by definition; they
+// belong to child sessions and are folded in separately (see subagentActivity).
+//
+// Why not `query_source = 'main_turn'`: on the live DB that under-counts a real
+// session, because compaction requests can carry millions of tokens. Measured
+// against ZCode's own `turn_usage` totals over 22 interactive sessions, the
+// median absolute error was 0.67 % for main_turn-only versus 0.001 % for this
+// scope, which matched the app exactly on most long sessions (a 494.6 M-token
+// session: app 494.60 M, main_turn 490.04 M, this scope 494.60 M).
+//
+// Written as `<> 'subagent'` rather than a whitelist so a query source ZCode
+// adds later is counted by default: anything a session writes that is not
+// subagent traffic IS that session's own usage.
+function usageRows(db, sid) {
+  if (!sid) return [];
+  const sql =
+    "SELECT id, session_id, turn_id, provider_id, model_id, status, started_at," +
+    " first_token_at, completed_at, time_to_first_token_ms, duration_ms," +
+    " output_tokens, reasoning_tokens, input_tokens, cache_read_input_tokens," +
+    " cache_creation_input_tokens, query_source, finish_reason, error_type" +
+    " FROM model_usage" + indexHint(sid) +
+    " WHERE status = 'completed' AND query_source <> 'subagent' AND session_id = ?";
+  try {
+    return db.prepare(sql).all(sid).map(toRow);
+  } catch {
+    return [];
+  }
 }
 
 // model_usage IS indexed — `(session_id, turn_id)` among others — but the
@@ -325,9 +388,7 @@ export function aggregate(rows) {
   const rated = rows.filter((r) => r.tokPerSec != null);
   const ttfts = rated.map((r) => r.ttftMs).filter((t) => t != null);
   const rate = (arr) =>
-    arr.length
-      ? Math.round((arr.reduce((s, v) => s + v, 0) / arr.length) * 10) / 10
-      : null;
+    arr.length ? round1(arr.reduce((s, v) => s + v, 0) / arr.length) : null;
   const sum = (arr) => arr.reduce((s, v) => s + v, 0);
   return {
     samples: rated.length,
@@ -418,10 +479,23 @@ export function formatSnapshot(snap) {
     lines.push(`last ${snap.window.window}: avg ${fmt(snap.window.avgTps, " tok/s")} / peak ${fmt(snap.window.peakTps, " tok/s")}`);
   }
   if (snap.session) {
+    // The session figure is the SESSION TREE, the same number the hover card's
+    // token panel shows — every surface must agree — with the subagent share
+    // stated rather than left implicit.
+    const tk = snap.session.tokens || {};
     lines.push(
-      `session total ${(snap.session.outputTokens ?? 0) + (snap.session.reasoningTokens ?? 0)} tok` +
+      `session ${tk.total ?? 0} tok` +
       ` · ${snap.session.samples} samples` +
-      (snap.session.avgTps != null ? ` · avg ${snap.session.avgTps} tok/s` : "")
+      (snap.session.avgTps != null ? ` · avg ${snap.session.avgTps} tok/s` : "") +
+      (tk.subagentSharePct ? ` · ${tk.subagentSharePct}% from subagents` : "")
+    );
+  }
+  if (snap.subagents && (snap.subagents.requests || snap.subagents.running)) {
+    lines.push(
+      `subagents ${snap.subagents.requests} req${snap.subagents.requests === 1 ? "" : "s"}` +
+      (snap.subagents.running ? ` (${snap.subagents.running} running)` : "") +
+      ` · ${snap.subagents.generated ?? 0} tok` +
+      (snap.subagents.avgTps != null ? ` · avg ${snap.subagents.avgTps} tok/s` : "")
     );
   }
   return lines.join(" · ");
@@ -479,36 +553,52 @@ export function sessionSnapshot(db, requestedSid, opts = {}) {
   // the full scan and its per-row projection can be skipped. Without this,
   // every refresh re-scanned and re-projected all ~1.5k rows of a long session
   // even when no request had landed.
+  // The subagent side of the tree is a set of indexed SQL aggregates, not a row
+  // read: measured 2026-10-17, the whole block costs ~12-16 ms on a 92-child,
+  // 5,467-request session and ~26 ms on a 112-child, 12,041-request one when
+  // only another session's traffic moved (its aggregate doubles as the block's
+  // change signature, so it cannot be skipped), against ~0.2 ms for a session
+  // that never spawned a subagent.
+  const sub = opts.subagents === false ? null : subagentActivity(db, sid, cache);
+
   const sig = cache ? completedSignature(db, sid) : null;
   let rows;
+  let usage;
   let derived;
   if (cache && sig != null && cache.rowSid === sid && cache.rowSig === sig && Array.isArray(cache.rows)) {
     rows = cache.rows;
-    // The window and session aggregates are pure functions of `rows` and the
-    // window size, so when the rows are reused the derived figures can be
-    // reused with them. Re-deriving means re-walking every cached row each
-    // tick (aggregate + sessionAggregateFrom over ~1.4k rows, ~2.5 ms warm),
-    // which is the bulk of what is left on the hot path.
-    if (cache.derivedSid === sid && cache.derivedSig === sig && cache.derivedWin === win && cache.derived) {
+    usage = Array.isArray(cache.usage) ? cache.usage : rows;
+    // The window, session and tree aggregates are pure functions of the rows,
+    // the window size, and the subagent aggregate, so when those are reused the
+    // derived figures can be reused with them. Re-deriving means re-walking
+    // every cached row each tick (aggregate + sessionAggregateFrom over ~1.4k
+    // rows, ~2.5 ms warm), which is the bulk of what is left on the hot path.
+    if (
+      cache.derivedSid === sid && cache.derivedSig === sig && cache.derivedWin === win &&
+      cache.derivedSubSig === (sub ? sub.sig : null) && cache.derived
+    ) {
       derived = cache.derived;
     }
   } else {
     rows = scopeRows(db, sid);
+    usage = usageRows(db, sid);
     if (cache && sig != null) {
       cache.rowSid = sid;
       cache.rowSig = sig;
       cache.rows = rows;
+      cache.usage = usage;
     }
   }
   if (!derived) {
     derived = {
       window: { window: Math.min(win, rows.length), ...aggregate(rows.slice(0, win).reverse()) },
-      session: sessionAggregateFrom(rows),
+      session: sessionAggregateFrom(rows, { usage, subagents: sub }),
     };
     if (cache && sig != null) {
       cache.derivedSid = sid;
       cache.derivedSig = sig;
       cache.derivedWin = win;
+      cache.derivedSubSig = sub ? sub.sig : null;
       cache.derived = derived;
     }
   }
@@ -523,6 +613,9 @@ export function sessionSnapshot(db, requestedSid, opts = {}) {
     session: { ...derived.session },
     dbInfo: dbInfo(),
   };
+  // The subagent block, as its own top-level surface: the card's last band reads
+  // it here, and it is NOT copied out of `session` (the payload ships it once).
+  if (sub) snap.subagents = sub;
   // Measured tool time. Its own table and its own signature: tool rows land
   // far more often than model rows, but the aggregate still only moves when one
   // completes, so the same reuse applies.
@@ -569,34 +662,86 @@ export function sessionSnapshot(db, requestedSid, opts = {}) {
 // Whole-session aggregate computed from already-fetched rows (see
 // sessionSnapshot): the wall-clock span vs LLM-busy time accounting lives here
 // so both entry points report identical numbers.
-export function sessionAggregateFrom(rows) {
-  const agg = aggregate(rows);
-  // Token panel (the app's own "Token usage" card, image 1). Same decomposition
-  // the per-turn layer uses, applied to the whole session's model requests:
-  //   cached   = cache_read_input_tokens
-  //   uncached = input_tokens - cache_read_input_tokens
-  //   output   = output_tokens + reasoning_tokens
-  //   total    = cached + uncached + output
-  //   hit%     = cached / (cached + uncached)
-  // cache_creation_input_tokens is deliberately NOT used: it is 0 in practice
-  // and does not equal the uncached figure (verified against live rows).
-  const cached = agg.cacheRead || 0;
-  const uncached = Math.max(0, (agg.inputTokens || 0) - cached);
-  const output = (agg.outputTokens || 0) + (agg.reasoningTokens || 0);
+//
+// TWO SCOPES LIVE IN THIS ONE OBJECT, deliberately:
+//
+//   * conversation figures — `samples`, `requests`, the rates, the spans and
+//     the busy times — come from the session's own composer requests, so
+//     parallel subagent streams can never distort "how fast is MY conversation
+//     running";
+//   * token and model figures are the SESSION TREE: the conversation's own
+//     requests (including its compaction and title requests) plus every request
+//     in the sessions it spawned. "How much did this session consume" is only
+//     answerable with all of it counted, and `tokens.main` / `tokens.subagents`
+//     carry the split so the sum hides nothing.
+export function sessionAggregateFrom(rateRows, opts = {}) {
+  const agg = aggregate(rateRows);
+  // The usage basis is the conversation's own rows — main_turn plus its
+  // compaction / title requests (see usageRows for why). Fall back to the rate
+  // rows when the caller has none: a global (session-less) query, or a DB whose
+  // session scope could not be read.
+  const usage = Array.isArray(opts.usage) && opts.usage.length ? opts.usage : rateRows;
+  const u = aggregate(usage);
+  const sub = opts.subagents || null;
+  const subTok = sub ? sub.tokens : null;
+
+  // Token panel (the app's own "Token usage" card, image 1). The conversation's
+  // own requests and the tree's children are decomposed by the one shared
+  // helper, then added, so the panel's figures and the app's cannot drift.
+  const main = tokenDecomp({
+    input: u.inputTokens,
+    cacheRead: u.cacheRead,
+    output: u.outputTokens,
+    reasoning: u.reasoningTokens,
+  });
+  const cached = main.cached + (subTok ? subTok.cached : 0);
+  const uncached = main.uncached + (subTok ? subTok.uncached : 0);
+  const output = main.output + (subTok ? subTok.output : 0);
+  const total = cached + uncached + output;
   agg.tokens = {
-    total: cached + uncached + output,
+    total,
     cached,
     uncached,
     output,
-    cacheHitPct: cached + uncached > 0 ? Math.round((cached / (cached + uncached)) * 1000) / 10 : null,
+    cacheHitPct: pct(cached, uncached),
+    // The split, so "which part of this came from subagents?" never has to be
+    // guessed and the panel can still be reconciled with the app's own
+    // (conversation-only) token card.
+    main: {
+      total: main.total,
+      cached: main.cached,
+      uncached: main.uncached,
+      output: main.output,
+      cacheHitPct: pct(main.cached, main.uncached),
+    },
+    subagents: {
+      total: subTok ? subTok.total : 0,
+      cached: subTok ? subTok.cached : 0,
+      uncached: subTok ? subTok.uncached : 0,
+      output: subTok ? subTok.output : 0,
+      cacheHitPct: subTok ? subTok.cacheHitPct : null,
+    },
+    subagentSharePct:
+      subTok && subTok.total > 0 && total > 0
+        ? round1((subTok.total / total) * 100)
+        : null,
   };
-  const a = rows.length ? Math.min(...rows.map((r) => r.startedAt ?? Infinity)) : null;
-  const b = rows.length ? Math.max(...rows.map((r) => r.completedAt ?? 0)) : null;
+  // The token sums on the aggregate itself are TREE-wide: every surface that
+  // shows "the session's tokens" (CLI, MCP, dashboard card) must show the same
+  // number the hover card's token panel shows, or the plugin contradicts itself.
+  // `tokens.main` is the conversation-only figure for anyone who wants it.
+  agg.outputTokens = (u.outputTokens || 0) + (sub ? sub.outputTokens : 0);
+  agg.reasoningTokens = (u.reasoningTokens || 0) + (sub ? sub.reasoningTokens : 0);
+  agg.inputTokens = (u.inputTokens || 0) + (sub ? sub.inputTokens : 0);
+  agg.cacheRead = (u.cacheRead || 0) + (sub ? sub.cacheRead : 0);
+
+  const a = rateRows.length ? Math.min(...rateRows.map((r) => r.startedAt ?? Infinity)) : null;
+  const b = rateRows.length ? Math.max(...rateRows.map((r) => r.completedAt ?? 0)) : null;
   if (a != null && b != null && b > a) {
     agg.spanMs = b - a;
-    agg.busyMs = rows.reduce((s, r) => s + (r.genMs ?? r.ttftMs ?? 0), 0);
+    agg.busyMs = rateRows.reduce((s, r) => s + (r.genMs ?? r.ttftMs ?? 0), 0);
     agg.otherMs = Math.max(0, agg.spanMs - agg.busyMs);
-    agg.requestBusyMs = rows.reduce(
+    agg.requestBusyMs = rateRows.reduce(
       (s, r) => s + (r.completedAt != null && r.startedAt != null ? r.completedAt - r.startedAt : 0),
       0
     );
@@ -604,39 +749,50 @@ export function sessionAggregateFrom(rows) {
   // Which models did this session actually use, and how much of it did each
   // account for? A session can switch models mid-flight (a fast model for
   // mechanical turns, a heavier one for reasoning), and that split is invisible
-  // in the whole-session totals. Derived from `rows` — the same scan the rest
-  // of the snapshot already pays for — so this adds no query and rides the
-  // existing refresh cache for free.
+  // in the whole-session totals. Derived from the same rows the snapshot already
+  // pays for, plus the subagent per-model groups (which arrive as SQL sums, so
+  // no subagent rows are read).
   //
   // Share is measured on generated tokens (output + reasoning), the quantity a
   // user means by "how much work did each model do". Requests are carried
   // alongside so a model that ran many cheap turns is not misread as minor.
+  //
+  // The map covers the SESSION TREE, because the donut's slices must sum to the
+  // token total the card above it shows. `subagentRequests` says how much of
+  // each model's traffic came from spawned agents.
   const byModel = new Map();
-  for (const r of rows) {
-    const key = r.model || "(unknown)";
+  const modelEntry = (key, provider) => {
     let m = byModel.get(key);
     if (!m) {
       m = {
         model: key,
-        provider: providerLabel(r.providerId, r.model),
+        provider,
         requests: 0,
+        subagentRequests: 0,
         outputTokens: 0,
         reasoningTokens: 0,
-        inputTokens: 0,
-        cacheRead: 0,
-        genMs: 0,
         tokPerSecSum: 0,
         rated: 0,
       };
       byModel.set(key, m);
     }
+    return m;
+  };
+  for (const r of usage) {
+    const m = modelEntry(r.model || "(unknown)", providerLabel(r.providerId, r.model));
     m.requests += 1;
     m.outputTokens += r.outputTokens || 0;
     m.reasoningTokens += r.reasoningTokens || 0;
-    m.inputTokens += r.inputTokens || 0;
-    m.cacheRead += r.cacheRead || 0;
-    if (r.genMs != null) m.genMs += r.genMs;
     if (r.tokPerSec != null) { m.tokPerSecSum += r.tokPerSec; m.rated += 1; }
+  }
+  for (const sm of sub ? sub.models || [] : []) {
+    const m = modelEntry(sm.model, sm.provider);
+    m.requests += sm.requests || 0;
+    m.subagentRequests += sm.requests || 0;
+    m.outputTokens += sm.outputTokens || 0;
+    m.reasoningTokens += sm.reasoningTokens || 0;
+    m.tokPerSecSum += sm.rateSum || 0;
+    m.rated += sm.rated || 0;
   }
   const models = Array.from(byModel.values()).map((m) => {
     const generated = m.outputTokens + m.reasoningTokens;
@@ -644,15 +800,16 @@ export function sessionAggregateFrom(rows) {
       model: m.model,
       provider: m.provider,
       requests: m.requests,
+      subagentRequests: m.subagentRequests,
       outputTokens: m.outputTokens,
       reasoningTokens: m.reasoningTokens,
       generated,
-      avgTps: m.rated ? Math.round((m.tokPerSecSum / m.rated) * 10) / 10 : null,
+      avgTps: m.rated ? round1(m.tokPerSecSum / m.rated) : null,
     };
   });
   const totalGenerated = models.reduce((s, m) => s + m.generated, 0);
   for (const m of models) {
-    m.share = totalGenerated > 0 ? Math.round((m.generated / totalGenerated) * 1000) / 10 : 0;
+    m.share = totalGenerated > 0 ? round1((m.generated / totalGenerated) * 100) : 0;
   }
   // Rank by share, then by generated tokens, so the chart's largest slice is
   // first and ties break deterministically.
@@ -782,15 +939,11 @@ export function fullSnapshot(db, requestedSid, opts = {}) {
 // is NOT indexed, but a session holds only tens of turns, so the whole session
 // is read once and mapped in memory.
 //
-// Token fields, matched against the app's own usage panel figures:
-//   cached    = cache_read_input_tokens
-//   uncached  = input_tokens - cache_read_input_tokens
-//   output    = output_tokens + reasoning_tokens
-//   total     = cached + uncached + output   (equals computed_total_tokens)
-//   cacheHit% = cached / (cached + uncached)
-// Note: `cache_creation_input_tokens` is NOT the uncached figure — it is 0 on
-// almost every row in practice, while input-minus-cache_read is the real
-// uncached count (verified: they differ on 1936 of 1943 live rows).
+// Token fields come from the shared decomposition above (tokenDecomp / pct),
+// matched against the app's own usage panel figures; the one caveat that belongs
+// to this table is that `cache_creation_input_tokens` is NOT the uncached figure
+// — it is 0 on almost every row in practice, while input-minus-cache_read is the
+// real uncached count (verified: they differ on 1936 of 1943 live rows).
 // `model_usage.provider_id` is an internal id — a UUID for custom endpoints
 // (e.g. 35d6923f-… → "Ollama Cloud") or a builtin slug like
 // "builtin:zai-coding-plan". The user-facing provider NAME lives in ZCode's own
@@ -867,7 +1020,7 @@ export function turnUsageFor(db, sid) {
   out.totals = {
     turns, steps, toolCalls: tools, toolErrors,
     totalTokens: total, cachedTokens: cached, uncachedTokens: uncached, outputTokens: output,
-    cacheHitPct: cached + uncached > 0 ? Math.round((cached / (cached + uncached)) * 1000) / 10 : null,
+    cacheHitPct: pct(cached, uncached),
   };
   return out;
 }
@@ -888,19 +1041,17 @@ export function turnTotals(db, sid) {
       )
       .get(sid);
     if (!r || !r.turns) return null;
-    const cached = r.cached ?? 0;
-    const uncached = Math.max(0, (r.inp ?? 0) - cached);
-    const output = (r.out ?? 0) + (r.reas ?? 0);
+    const d = tokenDecomp({ input: r.inp, cacheRead: r.cached, output: r.out, reasoning: r.reas });
     return {
       turns: r.turns,
       steps: r.steps ?? 0,
       toolCalls: r.tools ?? 0,
       toolErrors: r.toolErrors ?? 0,
-      totalTokens: r.total ?? cached + uncached + output,
-      cachedTokens: cached,
-      uncachedTokens: uncached,
-      outputTokens: output,
-      cacheHitPct: cached + uncached > 0 ? Math.round((cached / (cached + uncached)) * 1000) / 10 : null,
+      totalTokens: r.total ?? d.total,
+      cachedTokens: d.cached,
+      uncachedTokens: d.uncached,
+      outputTokens: d.output,
+      cacheHitPct: pct(d.cached, d.uncached),
     };
   } catch {
     return null; // older DB without the table
@@ -908,14 +1059,17 @@ export function turnTotals(db, sid) {
 }
 
 function turnRow(r) {
-  const cached = r.cache_read_input_tokens ?? 0;
-  const uncached = Math.max(0, (r.input_tokens ?? 0) - cached);
-  const output = (r.output_tokens ?? 0) + (r.reasoning_tokens ?? 0);
+  const d = tokenDecomp({
+    input: r.input_tokens,
+    cacheRead: r.cache_read_input_tokens,
+    output: r.output_tokens,
+    reasoning: r.reasoning_tokens,
+  });
   const durationMs = r.duration_ms != null ? r.duration_ms : (r.completed_at != null && r.started_at != null ? r.completed_at - r.started_at : null);
   // Turn-level speed, as the app's "Turn time and speed" card reports it:
   // generated (output) tokens over wall-clock duration. Null when either side
   // is missing — a running turn has no duration yet.
-  const tps = durationMs && durationMs > 0 && output > 0 ? Math.round((output / (durationMs / 1000)) * 10) / 10 : null;
+  const tps = durationMs && durationMs > 0 && d.output > 0 ? round1(d.output / (durationMs / 1000)) : null;
   return {
     turnId: r.turn_id,
     userMessageId: r.user_message_id,
@@ -929,11 +1083,11 @@ function turnRow(r) {
     toolCalls: r.tool_call_count ?? 0,
     toolErrors: r.tool_error_count ?? 0,
     inputTokens: r.input_tokens ?? 0,
-    cachedTokens: cached,
-    uncachedTokens: uncached,
+    cachedTokens: d.cached,
+    uncachedTokens: d.uncached,
     cacheCreationTokens: r.cache_creation_input_tokens ?? 0,
-    outputTokens: output,
-    totalTokens: r.computed_total_tokens ?? (cached + uncached + output),
+    outputTokens: d.output,
+    totalTokens: r.computed_total_tokens ?? d.total,
     model: providerLabel(r.provider_id, r.model_id),
   };
 }
@@ -970,111 +1124,220 @@ export function liveRate(db, sid) {
   };
 }
 
-// Subagent activity — requests made by spawned subagents.
+// ---------------------------------------------------------------------------
+// Subagent activity — the tree's spawned sessions, attributed by parent link
+// ---------------------------------------------------------------------------
 //
-// WHY THIS IS TIME-WINDOWED, NOT PER-TURN
+// A subagent's model requests are written to its OWN session
+// (`sess_subagent_agent_<uuid>`), never the parent conversation's. What was
+// believed missing was any attribution route, and there is one: the child
+// session names its parent.
 //
-// A subagent's model requests are written to their OWN session
-// (`sess_subagent_agent_<uuid>`), never the parent conversation's, and nothing
-// links a subagent row back to the turn that spawned it. Verified against the
-// live DB: `turn_id` on a subagent row never equals a parent main_turn turn_id
-// (0 of 26k), `parent_user_message_id` does not join to
-// `turn_usage.user_message_id`, and `trace_id` is far too coarse to use — one
-// trace spans 174 turns across 113 sessions. So an honest "this turn's
-// subagents" attribution does not exist in the schema; claiming one would be a
-// fabrication. What IS available is "subagents that ran in this time window",
-// which is what this returns — and which is exactly the question the pill could
-// not answer at all before.
+//   session.parent_id → the session that spawned it (task_type =
+//                       'subagent_child')
 //
-// It deliberately NEVER merges into the session figures: the session aggregate
-// stays main_turn-only, so folding subagent traffic in cannot distort the
-// composer's own numbers. This is a separate surface, reported separately.
-export const SUBAGENT_WINDOW_MS = 15 * 60 * 1000;
+// Verified on the live DB: 735 of 735 subagent sessions have a parent, every
+// parent is an interactive session (no nesting — so one level is the whole
+// tree), and the link exists from the moment the child session is created, so a
+// subagent that is running right now is attributable too.
+//
+// What does NOT exist is a per-TURN link, and nothing here pretends otherwise:
+// a subagent row's `turn_id` never equals a parent main_turn `turn_id`
+// (0 of 26k), and its `parent_user_message_id` matches no
+// `turn_usage.user_message_id` (0 of 22,332 rows). Session attribution is
+// exact; turn attribution would be a fabrication.
+//
+// WHY THIS REPLACED A TIME WINDOW. This surface used to report "subagents that
+// ran in the last 15 minutes, machine-wide", because attribution was believed
+// impossible. That had three consequences, each visible to a user:
+//
+//   * the count was a MOVING window, so it fell as rows aged out. A card
+//     reading "91 reqs" could read "89 reqs" a second later with no work undone
+//     — and because the window's lower bound only advances when a refresh runs,
+//     the first refresh after an idle stretch dropped every expired row at once;
+//   * it counted other conversations' subagents, so a chat that had spawned none
+//     could show a busy block;
+//   * its tokens belonged to no session, so they could not be part of the
+//     session's totals and its cache-hit % described only part of its traffic.
+//
+// Scoped to the session, the count only ever grows, the block belongs to the
+// conversation being read, and its tokens fold into the tree totals
+// (sessionAggregateFrom) with `tokens.subagents` / `tokens.subagentSharePct`
+// carrying the split.
+//
+// The block covers EVERY request in the spawned sessions (`query_source` is not
+// filtered): by definition, whatever a child session ran, it ran for this
+// conversation. Those sessions' own compaction requests are included for the
+// same reason the conversation's are — see usageRows.
 
-// Bounded: one window, at most this many rows projected. A subagent burst is
-// small (tens of rows), so this only guards against a pathological window.
-const SUBAGENT_LIMIT = 500;
+// The per-row rate, in SQL, so the whole subagent surface is a handful of
+// indexed aggregates rather than a row read plus a per-row projection in JS.
+// The two tiers mirror toRow exactly:
+//
+//   text tier: a first token exists and the generation window is in bounds
+//              → (output + reasoning) / (completed - first_token)
+//   wire tier: no first token (tool-call-only) → output / duration_ms
+//
+// AVG/SUM/MAX skip NULLs in SQL exactly as the JS path drops unrated rows, so
+// the statistics cover rated samples only. The one difference from the JS path
+// is that the mean is taken over exact rates rather than over rates rounded to
+// 0.1 first, which moves an average by at most 0.05 tok/s (the JS path had the
+// rounding error, this one does not).
+const RATE_SQL =
+  "CASE WHEN first_token_at IS NOT NULL AND completed_at > first_token_at" +
+  "          AND completed_at - first_token_at >= ? AND completed_at - first_token_at < ?" +
+  "          AND output_tokens + reasoning_tokens > 0" +
+  "     THEN (output_tokens + reasoning_tokens) * 1000.0 / (completed_at - first_token_at)" +
+  "     WHEN duration_ms >= ? AND duration_ms < ? AND output_tokens > 0" +
+  "     THEN output_tokens * 1000.0 / duration_ms END";
+const RATE_ARGS = [MIN_GEN_MS, MAX_GEN_MS, MIN_GEN_MS, MAX_GEN_MS];
 
-const SUBAGENT_COLS =
-  "SELECT id, session_id, turn_id, provider_id, model_id, status, started_at," +
-  " first_token_at, completed_at, time_to_first_token_ms, duration_ms," +
-  " output_tokens, reasoning_tokens, input_tokens, cache_read_input_tokens," +
-  " cache_creation_input_tokens, query_source, finish_reason, error_type, agent" +
-  " FROM model_usage";
+// The child set, as a SUBQUERY rather than an `IN (?, ?, …)` list of ids, so
+// the set is never materialised in JS and the query is one statement whatever
+// the tree's size. Confirmed with EXPLAIN QUERY PLAN: the planner walks
+// `session_parent_idx` and then does one index seek per child through
+// `model_usage_session_turn_idx`, so the cost tracks the TREE's rows rather than
+// the database's — which is what keeps a 92-child tree's block in the tens of
+// milliseconds while the table itself holds ~55k model rows.
+const CHILD_SESSIONS = "(SELECT id FROM session WHERE parent_id = ?)";
 
-export function subagentActivity(db, sinceTs) {
-  const since = Number.isFinite(sinceTs) ? sinceTs : Date.now() - SUBAGENT_WINDOW_MS;
-  let rows = [];
-  let runningRows = [];
-  try {
-    rows = db
-      .prepare(
-        SUBAGENT_COLS + " WHERE query_source = 'subagent' AND completed_at >= ?" +
-          " ORDER BY completed_at DESC LIMIT " + SUBAGENT_LIMIT
-      )
-      .all(since)
-      .map(toRow);
-    // Live subagents are a different status, so they cannot come from the
-    // completed scan above. Machine-wide by necessity: a running subagent has
-    // no completed row to anchor it to a session yet.
-    runningRows = db
-      .prepare(SUBAGENT_COLS + " WHERE query_source = 'subagent' AND status = 'running'" +
-        " ORDER BY started_at DESC LIMIT 20")
-      .all()
-      .map(toRow);
-  } catch {
-    // An older DB (or one without these rows) must not throw into the
-    // snapshot path; report "no subagent activity" instead.
-    return { sinceTs: since, active: false, running: 0, runningAgents: [], requests: 0, sessions: 0, agents: [] };
-  }
-  const rated = rows.filter((r) => r.tokPerSec != null);
-  const ttfts = rated.map((r) => r.ttftMs).filter((t) => t != null);
-  const mean = (a) =>
-    a.length ? Math.round((a.reduce((s, v) => s + v, 0) / a.length) * 10) / 10 : null;
-  const sessions = new Set(rows.map((r) => r.sessionId));
-
-  // Per-agent breakdown, so the card can say WHICH subagent is doing the work
-  // (the `agent` column holds the spawning agent, e.g. "zcode-Explore").
-  const groups = new Map();
-  for (const r of rows) {
-    const key = r.agent || "subagent";
-    let g = groups.get(key);
-    if (!g) { g = { agent: key, rows: [], sessions: new Set() }; groups.set(key, g); }
-    g.rows.push(r);
-    g.sessions.add(r.sessionId);
-  }
-  const agents = [...groups.values()]
-    .map((g) => {
-      const a = aggregate(g.rows);
-      return {
-        agent: g.agent,
-        requests: g.rows.length,
-        sessions: g.sessions.size,
-        avgTps: a.avgTps,
-        peakTps: a.peakTps,
-        avgTtftMs: a.avgTtftMs,
-        outputTokens: a.outputTokens + a.reasoningTokens,
-        lastAt: g.rows[0] ? g.rows[0].completedAt : null,
-      };
-    })
-    .sort((x, y) => y.requests - x.requests || String(x.agent).localeCompare(String(y.agent)));
-
-  const newest = rows[0] || null;
-  // "Active" means a subagent is working now, or one finished in the last
-  // minute — recent enough that the user still considers it happening.
-  const active = runningRows.length > 0 || (newest != null && Date.now() - newest.completedAt < 60_000);
-  return {
-    sinceTs: since,
-    active,
-    running: runningRows.length,
-    runningAgents: runningRows.map((r) => r.agent || "subagent"),
-    requests: rows.length,
-    sessions: sessions.size,
-    avgTps: mean(rated.map((r) => r.tokPerSec)),
-    peakTps: rated.length ? Math.max(...rated.map((r) => r.tokPerSec)) : null,
-    avgTtftMs: mean(ttfts),
-    outputTokens: rows.reduce((s, r) => s + r.outputTokens + r.reasoningTokens, 0),
-    lastAt: newest ? newest.completedAt : null,
-    agents,
+export function subagentActivity(db, sid, cache) {
+  const empty = {
+    sessionId: sid || null,
+    sig: "0:0",
+    sessions: 0,
+    requests: 0,
+    running: 0,
+    runningAgents: [],
+    avgTps: null,
+    peakTps: null,
+    avgTtftMs: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    cacheRead: 0,
+    generated: 0,
+    tokens: { total: 0, cached: 0, uncached: 0, output: 0, cacheHitPct: null },
+    lastAt: null,
+    active: false,
+    agents: [],
+    models: [],
   };
+  if (!sid) return empty;
+  let agg;
+  try {
+    agg = db
+      .prepare(
+        "SELECT" +
+          " SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) requests," +
+          " SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) running," +
+          " SUM(CASE WHEN status = 'completed' THEN input_tokens ELSE 0 END) inp," +
+          " SUM(CASE WHEN status = 'completed' THEN output_tokens ELSE 0 END) out," +
+          " SUM(CASE WHEN status = 'completed' THEN reasoning_tokens ELSE 0 END) reas," +
+          " SUM(CASE WHEN status = 'completed' THEN cache_read_input_tokens ELSE 0 END) cr," +
+          " MAX(CASE WHEN status = 'completed' THEN completed_at END) lastAt," +
+          " AVG(CASE WHEN status = 'completed' THEN (" + RATE_SQL + ") END) avgTps," +
+          " MAX(CASE WHEN status = 'completed' THEN (" + RATE_SQL + ") END) peakTps," +
+          " AVG(CASE WHEN (" + RATE_SQL + ") IS NOT NULL THEN time_to_first_token_ms END) avgTtftMs" +
+          " FROM model_usage WHERE session_id IN " + CHILD_SESSIONS
+      )
+      .get(...RATE_ARGS, ...RATE_ARGS, ...RATE_ARGS, sid);
+  } catch {
+    // No `session` table (an older DB) or no `model_usage`: report no subagent
+    // activity rather than throwing into the snapshot path.
+    return empty;
+  }
+  if (!agg || !agg.requests && !agg.running) return empty;
+
+  // The signature makes the group-by queries below skippable when nothing has
+  // moved since the last refresh.
+  const sig = `${agg.requests || 0}:${agg.lastAt || 0}:${agg.running || 0}`;
+  if (cache && cache.subSid === sid && cache.subSig === sig && cache.sub) return cache.sub;
+
+  const requests = agg.requests || 0;
+  const agents = requests
+    ? db
+        .prepare(
+          "SELECT agent, COUNT(*) requests, SUM(output_tokens + reasoning_tokens) generated" +
+            " FROM model_usage WHERE session_id IN " + CHILD_SESSIONS +
+            " AND status = 'completed' GROUP BY agent ORDER BY requests DESC, agent ASC"
+        )
+        .all(sid)
+        .map((r) => ({ agent: r.agent || "subagent", requests: r.requests, generated: r.generated || 0 }))
+    : [];
+  const models = requests
+    ? db
+        .prepare(
+          "SELECT model_id, MAX(provider_id) provider_id, COUNT(*) requests," +
+            " SUM(output_tokens) out, SUM(reasoning_tokens) reas," +
+            " SUM((" + RATE_SQL + ")) rateSum," +
+            " SUM(CASE WHEN (" + RATE_SQL + ") IS NOT NULL THEN 1 ELSE 0 END) rated" +
+            " FROM model_usage WHERE session_id IN " + CHILD_SESSIONS +
+            " AND status = 'completed' GROUP BY model_id"
+        )
+        .all(...RATE_ARGS, ...RATE_ARGS, sid)
+        .map((r) => ({
+          model: r.model_id,
+          provider: providerLabel(r.provider_id, r.model_id),
+          requests: r.requests,
+          outputTokens: r.out || 0,
+          reasoningTokens: r.reas || 0,
+          // The per-model rate sum and its sample count, so the merged model mix
+          // can weight them exactly instead of averaging averages.
+          rateSum: r.rateSum || 0,
+          rated: r.rated || 0,
+        }))
+    : [];
+  const runningAgents = agg.running
+    ? db
+        .prepare(
+          "SELECT DISTINCT agent FROM model_usage WHERE session_id IN " + CHILD_SESSIONS +
+            " AND status = 'running'"
+        )
+        .all(sid)
+        .map((r) => r.agent || "subagent")
+    : [];
+  let sessions = 0;
+  try {
+    sessions = db.prepare("SELECT COUNT(*) n FROM session WHERE parent_id = ?").get(sid)?.n ?? 0;
+  } catch {
+    /* the count is cosmetic; the aggregate above already proves there is a tree */
+  }
+
+  const d = tokenDecomp({ input: agg.inp, cacheRead: agg.cr, output: agg.out, reasoning: agg.reas });
+  const out = {
+    sessionId: sid,
+    sig,
+    sessions,
+    requests,
+    running: agg.running || 0,
+    runningAgents,
+    avgTps: round1(agg.avgTps),
+    peakTps: round1(agg.peakTps),
+    avgTtftMs: round1(agg.avgTtftMs),
+    inputTokens: agg.inp || 0,
+    outputTokens: agg.out || 0,
+    reasoningTokens: agg.reas || 0,
+    cacheRead: d.cached,
+    generated: d.output,
+    tokens: {
+      total: d.total,
+      cached: d.cached,
+      uncached: d.uncached,
+      output: d.output,
+      cacheHitPct: pct(d.cached, d.uncached),
+    },
+    lastAt: agg.lastAt || null,
+    // "Active" means a subagent is working now, or one finished in the last
+    // minute — recent enough that the user still considers it happening.
+    active: (agg.running || 0) > 0 || (agg.lastAt != null && Date.now() - agg.lastAt < 60_000),
+    agents,
+    models,
+  };
+  if (cache) {
+    cache.subSid = sid;
+    cache.subSig = sig;
+    cache.sub = out;
+  }
+  return out;
 }

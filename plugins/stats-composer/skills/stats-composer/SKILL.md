@@ -12,7 +12,7 @@ Two numbers, per model request, for **every provider** (the data is written by Z
 
 ## Where the user sees stats
 
-1. **Composer pill** (integration mode) — an injected pill in the composer toolbar next to the "+" button. Requires the app to expose a CDP port (start once with `--remote-debugging-port=9229`). Hovering it opens the **Session statistics** card, which has two densities (see Settings).
+1. **Composer pill** (integration mode) — an injected pill in the composer toolbar next to the "+" button. Requires the app to expose a CDP port (start once with `--remote-debugging-port=9229`). Hovering it opens the **Session statistics** card, which has two densities (see Settings). Its token panel counts the **session tree** — the conversation's own requests plus every request in the subagent sessions it spawned — with a `Subagent share` row stating how much of the total came from them; the rate rows describe the conversation alone. The card's last band, shown only when the session delegated, breaks that traffic down (`Subagents · this session`: requests, tokens, rate, TTFT).
 2. **Sidecar + dashboard** — `http://127.0.0.1:7427/dashboard` (auto-started; port file `~/.zcode/stats-composer/port`). The page shows four headline cards, a **model-mix donut** (each model's share of generated tokens; the headline figure sits below the ring, with a legend), a **Dark/Light theme switch**, and a per-request table that is **paginated and unbounded** — sorted and sliced server-side over the whole session via `GET /requests`, so `page X of Y` counts every request, not the first 500.
 3. **Assistant-attached line** (fallback) — this skill, when no pill/dashboard is active.
 

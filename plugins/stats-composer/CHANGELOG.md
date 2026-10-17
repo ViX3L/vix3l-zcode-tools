@@ -16,6 +16,58 @@ wiki (`wiki/log.md`), which is where the pre-git history of the plugin lives.
 
 ## [Unreleased]
 
+## [0.1.19] - 2026-10-17
+
+### Fixed
+
+- **Session token totals now include what the session delegated, and the subagent
+  count no longer falls.** Two problems, one cause: subagent attribution.
+
+  *The totals were incomplete.* The hover card's `Token usage` panel summed the
+  conversation's `main_turn` requests only, so a session that spawned subagents
+  (whose requests ZCode writes to their **own** sessions,
+  `sess_subagent_agent_<uuid>`) reported a token total and a cache-hit percentage
+  that described only part of its traffic — the subagent figures sat beside the
+  panel, contributing to nothing. Measured on this machine: a heavy session
+  reported 183.3 M tokens at 97.3 % cache hit for the conversation, against
+  764.3 M at 98 % for the whole tree. The panel is now the **session tree** —
+  the conversation's own requests *plus* every request in the sessions it
+  spawned — and a `Subagent share` row states how much of the total they are, so
+  the figure is neither silently short nor silently inflated. `tokens.main` /
+  `tokens.subagents` carry the split for any surface that needs it. The same
+  scope mistake applied to the conversation's own requests: `compact` and
+  `session_title` requests were excluded as well, under-counting long sessions by
+  up to 1.7 % (2.9 M tokens on the longest one measured); they are now included,
+  matching ZCode's own accounting to 0.001 % on the median session.
+
+  *The count moved backwards.* The block was a machine-wide **15-minute window**,
+  because a link from a subagent row back to its parent turn was believed
+  impossible. A window is a moving denominator: it read `91 reqs` and then
+  `89 reqs` with no work undone, and after an idle stretch the first refresh
+  dropped every expired row at once. A link does exist — `session.parent_id`
+  names the spawning session, the child exists from the moment it is spawned
+  (735 of 735 children on this machine resolve, every parent interactive, so one
+  level is the whole tree) — so the block is now scoped to **this session's
+  subagents**. The count only ever grows, it never reports another conversation's
+  agents, and a subagent that is running right now is attributable too.
+  Attribution stays honest about what the schema does *not* have: there is still
+  no per-turn link (a subagent row's `turn_id` never matches a parent `main_turn`
+  `turn_id`, 0 of 26 k; its `parent_user_message_id` matches no
+  `turn_usage.user_message_id`), so the block is per-session, never per-turn.
+
+  The whole surface is indexed SQL aggregates rather than a row read plus
+  projection, and the child set is expressed as a subquery so the planner does
+  one index seek per child (`session_parent_idx` -> `model_usage_session_turn_idx`,
+  confirmed with EXPLAIN QUERY PLAN). Cost therefore tracks the tree's own rows,
+  not the size of the database, and a session that never spawned a subagent pays
+  ~0.2 ms. Measured 2026-10-17 on this machine's trees: 112 children / 12,041 child requests -> ~62-74 ms when the tree moves and ~26 ms when only another session's traffic moved (the aggregate is the block's change signature); 92 children / 5,467 requests -> ~28-33 ms / ~12-16 ms; a session that spawned nothing -> ~0.2 ms.
+
+- **The dashboard, the CLI and the MCP tools report the same scope as the card.**
+  The dashboard's fourth card is now `Session tokens` (the tree total, with the
+  subagent share in its caption) instead of `Session output tok`, and
+  `request_stats`, `stats.mjs` and the donut legend name the subagent share where
+  it applies. A figure shown in two places must be the same figure.
+
 ## [0.1.18] - 2026-10-04
 
 ### Fixed

@@ -24,6 +24,12 @@ CREATE TABLE session (
   time_title_updated integer, trace_id text
 );
 CREATE INDEX session_project_idx on session(project_id);
+-- The parent link is how a spawned subagent session is attributed back to the
+-- conversation that spawned it, and its index is part of the shape the plugin
+-- depends on: the child subquery (SELECT id FROM session WHERE parent_id = ?)
+-- only walks the children through this index (the same one the live DB carries).
+CREATE INDEX session_parent_idx on session(parent_id);
+CREATE INDEX session_task_type_idx on session(task_type);
 
 CREATE TABLE model_usage (
   id text primary key, logical_request_id text not null, attempt_index integer not null default 0,
@@ -101,11 +107,20 @@ export function createDb(machine) {
   return db;
 }
 
-export function addSession(db, id, title = "Test session") {
+// One session row. `opts.parentId` makes it a spawned child
+// (`task_type='subagent_child'`), which is the ONLY attribution route from a
+// subagent's requests back to the conversation that spawned it — a child
+// session names its parent, and the parent's requests live in the parent.
+export function addSession(db, id, title = "Test session", opts = {}) {
+  const child = opts.parentId != null;
   db.prepare(
-    "INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated)" +
-    " VALUES (?,?,?,?,?,?,?,?)"
-  ).run(id, "proj_test", "slug-" + id, "/tmp", title, "1.0.0", Date.now(), Date.now());
+    "INSERT INTO session (id, project_id, slug, directory, title, version, time_created, time_updated," +
+    " parent_id, task_type) VALUES (?,?,?,?,?,?,?,?,?,?)"
+  ).run(
+    id, opts.projectId ?? "proj_test", "slug-" + id, "/tmp", title, "1.0.0",
+    opts.timeCreated ?? Date.now(), opts.timeUpdated ?? Date.now(),
+    opts.parentId ?? null, opts.taskType ?? (child ? "subagent_child" : "interactive")
+  );
 }
 
 // A completed main_turn request. Every field that the row projection reads can

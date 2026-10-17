@@ -104,8 +104,13 @@ test("the dashboard renders the session's headline cards from the live snapshot"
   assert.equal(cards[0].n, "model-a", "the newest completed row is model-a");
   assert.equal(cards[1].k, "Latest request TTFT");
   assert.equal(cards[1].v, "123ms", "the newest row's TTFT (100 + i for i = 23)");
-  assert.equal(cards[3].k, "Session output tok");
-  assert.equal(cards[3].v, String(24 * 500), "session output is the sum of the completed rows");
+  assert.equal(cards[3].k, "Session tokens");
+  // The card reads the SAME total the hover card's token panel shows —
+  // cached + uncached + output over every completed request, i.e.
+  // 24 x (1000 input + 500 output) = 36,000, abbreviated by tokN. This fixture
+  // spawns no subagents, so the caption carries no subagent share.
+  assert.equal(cards[3].v, "36.0k", "session tokens sum every completed row");
+  assert.equal(cards[3].n, "24 samples · avg 500 tok/s");
   assert.deepEqual(page.__errors, []);
 });
 
