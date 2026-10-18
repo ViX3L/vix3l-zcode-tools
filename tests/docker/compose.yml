@@ -47,6 +47,5 @@ services:
     #   docker compose -f tests/docker/compose.yml run --rm --build tests
     environment:
       NODE_NO_WARNINGS: "1"
-    # The quoted glob is expanded by the test runner itself; a bare directory
-    # argument is not accepted here (it fails with MODULE_NOT_FOUND).
-    command: ["node", "--test", "--test-concurrency=1", "--test-timeout=60000", "tests/**/*.test.mjs"]
+    # Same command as the image's CMD and CI: one definition, in package.json.
+    command: ["npm", "test"]

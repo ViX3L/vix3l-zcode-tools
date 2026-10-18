@@ -1,0 +1,67 @@
+# The one container test definition, called by both CI and Release.
+#
+# Keeping the image build and the `npm test` invocation here means a release
+# gate and a branch run execute exactly the same subject: the checkout baked
+# into the pinned image, with the repo's own test command.
+name: Container tests
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out (a tag for releases).
+        type: string
+        required: false
+        default: ""
+      image_tag:
+        description: Local tag for the built image.
+        type: string
+        required: false
+        default: ci
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test suite (container)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build the test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: tests/docker/Dockerfile
+          tags: vix3l-zcode-tools-tests:${{ inputs.image_tag }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # `set +e` keeps a failing suite's full TAP output in the log: Actions
+      # runs `run:` under `bash -e`, so an unchecked docker failure would abort
+      # before the cat and leave only "exit code 1" behind.
+      - name: Run tests
+        run: |
+          set +e
+          docker run --rm --shm-size=1g --init \
+            vix3l-zcode-tools-tests:${{ inputs.image_tag }} > test-output.txt 2>&1
+          status=$?
+          set -e
+          cat test-output.txt
+          exit $status
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-${{ inputs.image_tag }}
+          path: test-output.txt
+          if-no-files-found: warn

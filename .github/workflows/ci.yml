@@ -39,61 +39,27 @@ permissions:
 jobs:
   test:
     name: Test suite (container)
+    # One definition of the suite, shared with release.yml. The reusable
+    # workflow builds the pinned image and runs `npm test` inside it; neither
+    # caller repeats the build or the container flags.
+    uses: ./.github/workflows/container-tests.yml
+    with:
+      image_tag: ci
+
+  quality:
+    name: Quality gates
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-
-      # Build the image from the Dockerfile in the repo, so the CI environment
-      # is defined by version control and nothing else. Buildx with the GitHub
-      # cache keeps rebuilds cheap after the first run.
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build the test image
-        uses: docker/build-push-action@v6
+      - uses: actions/setup-node@v4
         with:
-          context: .
-          file: tests/docker/Dockerfile
-          tags: vix3l-zcode-tools-tests:ci
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Run the image's own entrypoint (the full test glob). No source volume is
-      # mounted: the image already COPYs the checkout at build time, and running
-      # against that baked copy is what makes a run reproducible from the image
-      # alone — and avoids shadowing the image's node_modules (which holds the
-      # one dev dependency, Playwright) with the runner's empty directory.
-      #
-      # The container needs the same shared-memory bump the compose file uses,
-      # or Chromium crashes mid-run on a large page.
-      #
-      # TAP output is captured and printed, so a failing test's full assertion
-      # appears in the log a maintainer reads.
-      #
-      # `set +e` around the docker call is load-bearing: Actions runs a `run:`
-      # block under `bash -e`, so a failing `docker run` would abort the step
-      # BEFORE the `cat`, leaving "Error: Process completed with exit code 1."
-      # as the only thing in the log and the real failure readable only by
-      # downloading the artifact. Capturing the status without tripping `-e`
-      # is what keeps the failure in the log where it is needed.
-      - name: Run tests
-        run: |
-          set +e
-          docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:ci > test-output.txt 2>&1
-          status=$?
-          set -e
-          cat test-output.txt
-          exit $status
-
-      - name: Upload test output
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-output
-          path: test-output.txt
-          if-no-files-found: warn
+          node-version: 24
+      # Dependency-free by design: sync, clone detection, dead-code detection,
+      # lint rules and the scorecard all run on the stock Node toolchain.
+      - name: Run mechanical gates
+        run: npm run quality
+      - name: Certify the scorecard
+        run: npm run quality:score
 
   versions:
     name: Version declarations agree

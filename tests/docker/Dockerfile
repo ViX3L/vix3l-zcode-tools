@@ -74,9 +74,7 @@ RUN mkdir -p /app/tests/.artifacts \
 USER node
 ENV HOME=/home/node
 
-# `node --test` is the runner; --test-concurrency=1 keeps the browser tests
-# (which each launch a Chromium) from fighting over memory. The test path is a
-# QUOTED GLOB: `node --test` does not accept a bare directory argument here (it
-# resolves it as a module specifier and fails with MODULE_NOT_FOUND), whereas a
-# glob is expanded by the runner itself and discovers every tier.
-CMD ["node", "--test", "--test-concurrency=1", "--test-timeout=60000", "tests/**/*.test.mjs"]
+# The test command lives in package.json only. `npm test` pins the runner flags
+# (serial concurrency: each browser test launches Chromium; the quoted glob is
+# expanded by the runner itself), so CI, compose and this image cannot drift.
+CMD ["npm", "test"]

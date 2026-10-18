@@ -22,7 +22,7 @@ manifest="$src/.zcode-plugin/plugin.json"
 [ -f "$manifest" ] || { echo "plugin has no .zcode-plugin/plugin.json: $src" >&2; exit 1; }
 
 # The manifest version must equal the tag's, or the archive lies about itself.
-manifest_version="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync('$manifest','utf8')).version)")"
+manifest_version="$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$manifest")"
 if [ "$manifest_version" != "$version" ]; then
   echo "version mismatch: tag wants $version, $manifest says $manifest_version" >&2
   exit 1

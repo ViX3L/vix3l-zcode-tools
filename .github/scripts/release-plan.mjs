@@ -12,8 +12,9 @@
 // the tag is the one outcome a release must never produce.
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 // The plugins this marketplace ships, in catalog order. A directory present but
 // unlisted is ignored (it is not part of the marketplace).

@@ -43,32 +43,12 @@ jobs:
   # --- gate: the suite must pass on the tagged commit -----------------------
   test:
     name: Test suite (container)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
-      - uses: docker/setup-buildx-action@v3
-      - name: Build the test image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: tests/docker/Dockerfile
-          tags: vix3l-zcode-tools-tests:release
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Run tests
-        run: |
-          # `set +e` so a failing run is printed below rather than aborting the
-          # step (Actions' `bash -e`) with the failure only in the log's absence.
-          set +e
-          docker run --rm --shm-size=1g --init vix3l-zcode-tools-tests:release > test-output.txt 2>&1
-          status=$?
-          set -e
-          cat test-output.txt
-          exit $status
+    # Same reusable job CI runs, against the tagged commit. A release cannot
+    # publish a build whose own suite has not passed in the pinned image.
+    uses: ./.github/workflows/container-tests.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref }}
+      image_tag: release
 
   # --- plan: turn the tag into a list of {plugin, version} to release -------
   plan:

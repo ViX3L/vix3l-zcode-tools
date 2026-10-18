@@ -22,9 +22,9 @@
 // that file's path crosses the output boundary (see release.yml).
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PLUGINS = ["stats-composer", "usage-context"];
 
 function changelogPath(plugin) {
@@ -33,7 +33,7 @@ function changelogPath(plugin) {
 
 // The body of `## [version] - date`, without the heading line itself. Returns
 // null when no such heading exists.
-export function sectionFor(md, version) {
+function sectionFor(md, version) {
   const lines = md.split("\n");
   const start = lines.findIndex((l) => new RegExp(`^## \\[${version.replace(/\./g, "\\.")}\\]`).test(l));
   if (start < 0) return null;
