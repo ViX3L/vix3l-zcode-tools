@@ -16,6 +16,22 @@ wiki (`wiki/log.md`), which is where the pre-git history of the plugin lives.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-10-18
+
+### Changed
+
+- **Settings saved under Advanced details now take effect live.** The injector
+  re-reads the plugin options on every 10-second sweep, so moving the pill,
+  switching between the wide and compact card, or changing the session window
+  no longer needs a re-install or an app restart. A layout or position change
+  supersedes the running page generation, which adopts the page instead of
+  blanking it; a window change forces the next snapshot immediately.
+- **The compact card is slightly wider**, so the subagent activity row no longer
+  crowds its label against the value.
+- Internals only: the page renderer is split into a reusable core and the pill
+  entrypoint, the dashboard is served from an asset file, and the MCP handlers
+  and doctor checks live in smaller modules. Behaviour is unchanged.
+
 ## [0.1.21] - 2026-10-18
 
 ### Fixed

@@ -6,8 +6,8 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 
 | Plugin | What it shows | Version |
 |---|---|---|
-| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.20 |
-| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.3 |
+| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.22 |
+| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.5 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
 
@@ -95,7 +95,7 @@ The inline composer pill appears when ZCode exposes a local debugging port — l
 
 ## Settings
 
-Open **Settings → Plugins → (plugin) → Advanced details → Configuration** to change a plugin's options, then click **Save configuration**; they are saved to your ZCode config and picked up without a restart.
+Open **Settings → Plugins → (plugin) → Advanced details → Configuration** to change a plugin's options, then click **Save configuration**. The injectors re-read those options on every 10-second sweep, so pill position, card density and chip visibility change without a re-install or an app restart. A sidecar-port change is the one exception: the running server is bound to the old port, so the helper stands down and the next hook starts it on the new one.
 
 | Option | Plugin | Default | Meaning |
 |---|---|---|---|
@@ -109,7 +109,7 @@ Open **Settings → Plugins → (plugin) → Advanced details → Configuration*
 | **Show the "Ran for" chip** | usage-context | on | Also render the elapsed-time chip |
 | **stats-composer sidecar port** | usage-context | `7427` | Which stats-composer server to read |
 
-The card layout is also settable by hand: write `{"wideCard": false}` to `~/.zcode/stats-composer/config.json`. The marketplace setting takes precedence when it is set.
+The card layout is also settable by hand: write `{"wideCard": false}` to `~/.zcode/stats-composer/config.json`. The marketplace setting takes precedence when it is set. The same live re-read applies to that file.
 
 ## Requirements
 
@@ -171,6 +171,22 @@ rather than of a test fixture. The plugins themselves have no runtime
 dependencies; the only package here is Playwright, used as a browser driver,
 pinned in `package.json`.
 
+## Quality gates
+
+The code-quality contract and its audit baseline are documented in
+[`.github/quality/baseline.md`](.github/quality/baseline.md), and enforced by
+dependency-free scripts rather than review alone:
+
+```sh
+npm run quality        # shared-source sync, clones, dead code, lint rules
+npm run quality:score  # the 20-point DRY/clean-code scorecard
+```
+
+`quality` fails on a drifted generated copy, a ≥10-line clone, an unused import
+or export, an oversized module/function, an empty `catch`, or prefix-based CORS.
+`quality:score` turns those results plus structural checks into the scorecard;
+CI runs both alongside the container suite.
+
 ## Repository layout
 
 ```
@@ -192,8 +208,8 @@ tests/
 
 Releases are cut by pushing a version tag; `.github/workflows/release.yml` runs
 the whole suite first, then publishes a GitHub Release per plugin with its source
-tree as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.20` to
-release every plugin, or `stats-composer-v0.1.20` / `usage-context-v0.1.3` for
+tree as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.22` to
+release every plugin, or `stats-composer-v0.1.22` / `usage-context-v0.1.5` for
 one. A tag's version must match the plugin's own manifest — a mismatch fails the
 run before anything is published.
 

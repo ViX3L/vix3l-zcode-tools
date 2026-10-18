@@ -16,6 +16,21 @@ Entries for `0.1.0` are condensed from the project's own engineering wiki
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-18
+
+### Changed
+
+- **Chip settings now apply live.** The injector re-reads `showChips` and
+  `showRanFor` on each sweep. Turning the chips off removes them within one
+  interval, and turning them back on remounts them, without a re-install or an
+  app restart.
+- **The unused `port` option was removed** from the plugin manifest. It had no
+  reader — the plugin binds no port, because it reads stats-composer's sidecar —
+  so a user could set a value that did nothing. `sidecarPort` remains the one
+  port setting.
+- Internals only: the injector's sweep and socket handling are split into
+  named helpers shared with the test harness. Behaviour is unchanged.
+
 ## [0.1.4] - 2026-10-18
 
 ### Fixed
