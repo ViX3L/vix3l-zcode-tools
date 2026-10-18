@@ -13,9 +13,14 @@ Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sq
 
 ## What it looks like
 
+The pill, chips, and compact card were captured from a live local ZCode session.
+The wide card and usage panel are rendered locally from the shipping page assets.
+Every image is a committed asset updated by hand when the UI changes; CI never
+generates or rewrites them.
+
 **stats-composer** — the stats pill sits in the composer toolbar, right after the "+" button, and shows the latest request's rate and first-token latency:
 
-![The stats pill in the ZCode composer toolbar, reading 395.9 tok/s · 4203ms](assets/stats-composer-pill.png)
+![The stats pill in the live ZCode composer, reading 300.4 tok/s · 2707ms](assets/stats-composer-pill.png)
 
 Hovering the pill opens the **Session statistics** card: latest request and windowed averages, session time split, turn/step/tool-call counts, the token and cache breakdown, and — when the session started any — a **subagent activity** block: how many ran, what they cost, and what share of the session's tokens they account for. The card ships in a roomy layout by default; a **compact** layout is one setting away (see below):
 
@@ -25,7 +30,7 @@ Hovering the pill opens the **Session statistics** card: latest request and wind
 
 **usage-context** — each assistant turn's footer carries two chips beside its timestamp, and hovering either one opens the turn's full accounting:
 
-![Per-turn Usage and Ran-for chips beside a turn timestamp](assets/usage-context-chips.png)
+![Live Usage and Ran-for chips beside a turn timestamp, reading 1.27M tok and 54s](assets/usage-context-chips.png)
 
 ![The Turn usage hover panel showing provider/model, uncached input and output](assets/usage-context-panel.png)
 
