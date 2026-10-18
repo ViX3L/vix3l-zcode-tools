@@ -1,97 +1,59 @@
 #!/usr/bin/env node
 // SessionStart hook — records the active session and (in auto/sidecar mode)
 // best-effort spawns the stats sidecar so a sidecar started manually once
-// survives app restarts without user action. Output must be strict JSON.
-
+// survives app restarts without user action. Output must be strict JSON even
+// when the work throws: a hook without an envelope is silently dropped.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { sidecarAlive, spawnDetachedNode } from "../scripts/lib/runtime.mjs";
+import { readOptions } from "../scripts/lib/options.mjs";
+import { statsComposerPortFile, activeSessionFile } from "../scripts/lib/paths.mjs";
+import { readStdin, sessionIdFrom, writeEnvelope } from "../scripts/lib/hook-protocol.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const STATE_FILE =
-  process.env.TPS_MONITOR_STATE_FILE ||
-  path.join(os.homedir(), ".zcode", "tps-monitor.last-session.json");
-const RUN_DIR = path.join(os.homedir(), ".zcode", "stats-composer");
-const CONFIG_FILE = path.join(os.homedir(), ".zcode", "stats-composer", "config.json");
-
-function readConfig() {
-  try {
-    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
 
 function discoverSidecar() {
   try {
-    return Number(fs.readFileSync(path.join(RUN_DIR, "port"), "utf8").trim()) || null;
+    return Number(fs.readFileSync(statsComposerPortFile(), "utf8").trim()) || null;
   } catch {
     return null;
   }
+}
+
+function recordSession(sid) {
+  if (!sid) return;
+  try {
+    fs.mkdirSync(path.dirname(activeSessionFile()), { recursive: true });
+    fs.writeFileSync(
+      activeSessionFile(),
+      JSON.stringify({ sessionId: sid, ts: Date.now(), source: "session-start" })
+    );
+  } catch { /* an unwritable state dir must not fail the hook */ }
 }
 
 async function main() {
   let payload = {};
   try {
     payload = JSON.parse((await readStdin()) || "{}");
-  } catch {}
-  const sid =
-    payload.session_id ||
-    process.env.ZCODE_SESSION_ID ||
-    process.env.CLAUDE_SESSION_ID ||
-    "";
-  if (sid) {
-    try {
-      fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-      fs.writeFileSync(
-        STATE_FILE,
-        JSON.stringify({ sessionId: sid, ts: Date.now(), source: "session-start" })
-      );
-    } catch {}
-  }
-  const cfg = readConfig();
-  const mode = ["auto", "skill", "sidecar"].includes(cfg.mode) ? cfg.mode : "auto";
-  if (mode === "auto" || mode === "sidecar") {
-    const port = discoverSidecar();
-    if (!(await sidecarAlive(port))) {
-      // Awaited on purpose: the hook's finally() calls process.exit(0) right
-      // after main() resolves, which would kill a fire-and-forget import.
-      // spawnDetachedNode re-asserts ELECTRON_RUN_AS_NODE and sets windowsHide
-      // (see scripts/lib/runtime.mjs) so this works under ZCode's embedded Node
-      // and on Windows alike.
-      spawnDetachedNode(path.join(HERE, "..", "sidecar", "server.mjs"), [], {
-        STATS_SIDECAR_AUTOSTART: "1",
-      });
-    }
-  }
+  } catch { /* malformed stdin: proceed with no session id */ }
+  recordSession(sessionIdFrom(payload));
+
+  const opts = readOptions();
+  if (opts.mode !== "auto" && opts.mode !== "sidecar") return "";
+  const port = discoverSidecar() || opts.port;
+  if (await sidecarAlive(port)) return "";
+
+  // Awaited on purpose: writeEnvelope exits right after main() resolves, which
+  // would kill a fire-and-forget child. spawnDetachedNode re-asserts
+  // ELECTRON_RUN_AS_NODE and sets windowsHide, so this works under ZCode's
+  // embedded Node and on Windows alike.
+  spawnDetachedNode(path.join(HERE, "..", "sidecar", "server.mjs"), [], {
+    STATS_SIDECAR_AUTOSTART: "1",
+  });
   return "";
 }
 
-function readStdin() {
-  return new Promise((resolve) => {
-    let raw = "";
-    let done = false;
-    const finish = () => (done ? null : ((done = true), resolve(raw)));
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (c) => (raw += c));
-    process.stdin.on("end", finish);
-    setTimeout(finish, 1500);
-  });
-}
-
-// process.exit() does not flush a pending stdout write; wait for the write to
-// drain before exiting so the JSON is never truncated (see prompt-submit.mjs).
-function writeAndExit(payload) {
-  if (process.stdout.write(payload)) process.exit(0);
-  else process.stdout.once("drain", () => process.exit(0));
-}
-
 main()
-  .then((ctx) =>
-    writeAndExit(
-      JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: ctx } })
-    )
-  )
-  .catch(() => process.exit(0));
+  .catch(() => "")
+  .finally(() => writeEnvelope("SessionStart", ""));

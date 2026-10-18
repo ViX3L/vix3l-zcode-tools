@@ -13,9 +13,6 @@
 //
 // Only reads the WAL sqlite db (readOnly). Never blocks, never writes.
 
-process.removeAllListeners("warning");
-process.on("warning", () => {});
-
 import * as m from "./lib/metrics.mjs";
 
 const args = process.argv.slice(2);

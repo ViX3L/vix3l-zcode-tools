@@ -1,64 +1,24 @@
 #!/usr/bin/env node
 // stats-composer MCP server — stdio JSON-RPC, newline-delimited framing.
-// Tools expose the same per-request TPS / TTFT data as the sidecar.
 //
-// Framing: ZCode's stdio MCP client reads one JSON object per line (it splits
-// the stream on "\n", strips a trailing "\r", and JSON.parses each line,
-// skipping SyntaxErrors). It does NOT speak LSP-style Content-Length framing:
-// an earlier version of this server wrote Content-Length headers, so every
-// reply arrived glued to its header, parsed as a SyntaxError, and the client
-// timed out waiting for `initialize` — the plugin's MCP entry showed red with
-// "connection timed out after 30000ms" while the process itself was healthy.
-// Write one compact JSON object per line. Reads stay permissive (both
-// framings are accepted) so manual Content-Length smoke tests still work.
+// ZCode's stdio MCP client reads ONE JSON object per line (it splits on "\n"
+// and skips parse failures). It does NOT speak LSP-style Content-Length
+// framing: an earlier version wrote Content-Length headers, so every reply
+// arrived glued to its header and the client timed out waiting for
+// `initialize`. Reads stay permissive (both framings are accepted) so manual
+// smoke tests still work.
 //
 // Smoke test:
 //   printf '%s\n' \
 //     '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0"}}}' \
 //     '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
 //     | node mcp/stats-server.mjs
+import path from "node:path";
+import { TOOLS, callTool } from "./lib/tools.mjs";
+import { pluginVersion } from "../scripts/lib/version.mjs";
 
-process.removeAllListeners("warning");
-process.on("warning", () => {});
-const { DatabaseSync } = await import("node:sqlite");
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import * as metrics from "../scripts/lib/metrics.mjs";
-
-const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-let VERSION = "0.0.0";
-try {
-  VERSION = JSON.parse(readFileSync(join(PLUGIN_ROOT, ".zcode-plugin", "plugin.json"), "utf8")).version;
-} catch {}
-const SERVER_INFO = { name: "stats-composer", version: VERSION };
-
-const TOOLS = [
-  {
-    name: "request_stats",
-    description:
-      "Per-request TPS (output tok/s) and TTFT (time-to-first-token) stats from ZCode's usage DB: latest request, last-N window average/peak, and per-turn aggregate. Also reports the session's token accounting (total / cached / uncached / output, cache-hit %) including the subagents the session spawned, and that subagent activity separately. Works for every provider including custom endpoints.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        session_id: { type: "string", description: "Scope to a session; default follows the user's most recent session." },
-        window: { type: "integer", minimum: 1, maximum: 100, description: "Window size for the average, default 10." },
-      },
-    },
-  },
-  {
-    name: "history_stats",
-    description:
-      "Recent per-request samples with per-request tok/s and TTFT, newest last. For spotting slow providers or speed regressions.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        limit: { type: "integer", minimum: 1, maximum: 50, description: "How many recent samples, default 15." },
-        session_id: { type: "string" },
-      },
-    },
-  },
-];
+const PLUGIN_ROOT = path.resolve(import.meta.dirname, "..");
+const SERVER_INFO = { name: "stats-composer", version: pluginVersion(PLUGIN_ROOT) };
 
 function writeMessage(message) {
   // One line per message — see the framing note in the header. A single
@@ -69,82 +29,6 @@ function writeMessage(message) {
 const ok = (id, result) => writeMessage({ jsonrpc: "2.0", id, result });
 const fail = (id, code, message) =>
   writeMessage({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
-
-// The usage DB is created by ZCode the first time a message is sent, so "the DB
-// file does not exist yet" and "there is no session yet" are the same, ordinary
-// situation on a fresh install. Open once, here, and turn that case into the
-// tool's own sentence instead of letting a raw sqlite error ("unable to open
-// database file") reach the user through a tool result.
-function openDbOrNull() {
-  try {
-    if (!metrics.dbExists()) return null;
-    return new DatabaseSync(metrics.DB_PATH, { readOnly: true });
-  } catch {
-    return null;
-  }
-}
-const NO_DB = { content: [{ type: "text", text: "no session yet — ZCode creates its usage database with the first message" }] };
-
-function toolRequestStats(args) {
-  const db = openDbOrNull();
-  if (!db) return NO_DB;
-  try {
-    const sid = metrics.resolveSession(args?.session_id || null);
-    if (!sid) return { content: [{ type: "text", text: "no session yet" }] };
-    const snap = metrics.fullSnapshot(db, sid, { window: args?.window || 10 });
-    const recent = metrics.recentRequests(db, sid, 5).reverse();
-    const lines = [];
-    lines.push(`session: ${sid}`);
-    if (snap.last) lines.push(`last: ${metrics.formatLine(snap.last)}`);
-    if (snap.live?.streaming) lines.push(`live: streaming now (est ${snap.live.estTps ?? "?"} tok/s)`);
-    if (snap.window?.samples) lines.push(`window(${snap.window.window}): avg ${snap.window.avgTps} tok/s · peak ${snap.window.peakTps} tok/s · avg TTFT ${snap.window.avgTtftMs ?? "?"} ms`);
-    if (snap.session) {
-      const tk = snap.session.tokens || {};
-      lines.push(
-        `session: ${tk.total ?? 0} tokens (${tk.cached ?? 0} cached / ${tk.uncached ?? 0} uncached / ${tk.output ?? 0} output)` +
-          ` · cache hit ${tk.cacheHitPct ?? "—"}% · ${snap.session.samples} samples · avg ${snap.session.avgTps ?? "—"} tok/s`
-      );
-      if (tk.subagentSharePct) lines.push(`  of which subagents: ${tk.subagentSharePct}%`);
-    }
-    // Subagent activity belongs to THIS session (attributed through the child
-    // sessions' parent link), so it explains part of the totals above rather
-    // than being a separate, machine-wide window.
-    const sa = snap.subagents;
-    if (sa && (sa.requests || sa.running)) {
-      lines.push(
-        `subagents: ${sa.requests} request${sa.requests === 1 ? "" : "s"}` +
-          (sa.running ? ` (${sa.running} running now)` : "") +
-          ` · ${sa.generated ?? 0} generated tok · cache hit ${sa.tokens?.cacheHitPct ?? "—"}%` +
-          ` · avg ${sa.avgTps ?? "—"} tok/s · avg TTFT ${sa.avgTtftMs ?? "—"} ms` +
-          (sa.agents?.length ? ` · ${sa.agents.map((a) => a.agent + "×" + a.requests).join(", ")}` : "")
-      );
-    }
-    if (recent.length) {
-      lines.push("recent:");
-      for (const r of recent) lines.push(`  - ${metrics.formatLine(r)}`);
-    }
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  } finally {
-    try { db.close(); } catch {}
-  }
-}
-
-function toolHistoryStats(args) {
-  const db = openDbOrNull();
-  if (!db) return NO_DB;
-  try {
-    const sid = metrics.resolveSession(args?.session_id || null);
-    if (!sid) return { content: [{ type: "text", text: "no session yet" }] };
-    const rows = metrics.recentRequests(db, sid, args?.limit || 15).reverse();
-    const lines = rows.map((r) => {
-      const t = new Date(r.completedAt || 0).toISOString().slice(11, 19);
-      return `${t}  ${r.tokPerSec ?? "—"} tok/s  ttft ${r.ttftMs ?? "?"}ms  ${r.outputTokens + r.reasoningTokens} tok  ${r.model}${r.status === "completed" ? "" : " (" + r.status + ")"}`;
-    });
-    return { content: [{ type: "text", text: rows.length ? lines.join("\n") : "no completed requests yet" }] };
-  } finally {
-    try { db.close(); } catch {}
-  }
-}
 
 async function handleRequest(msg) {
   const { id, method, params } = msg;
@@ -162,10 +46,11 @@ async function handleRequest(msg) {
       return ok(id, { tools: TOOLS });
     case "tools/call": {
       const name = params?.name;
-      try {
-        if (name === "request_stats") return ok(id, toolRequestStats(params?.arguments));
-        if (name === "history_stats") return ok(id, toolHistoryStats(params?.arguments));
+      if (!TOOLS.some((t) => t.name === name)) {
         return fail(id, -32602, `unknown tool: ${name}`);
+      }
+      try {
+        return ok(id, callTool(name, params?.arguments));
       } catch (e) {
         return ok(id, { content: [{ type: "text", text: `error: ${e?.message || e}` }] });
       }
@@ -181,7 +66,6 @@ process.stdin.on("data", (chunk) => {
   while (true) {
     const header = buf.indexOf("\r\n\r\n");
     if (header < 0) {
-      // newline-delimited fallback
       const nl = buf.indexOf("\n");
       if (nl < 0) break;
       const line = buf.subarray(0, nl).toString().trim();
@@ -199,8 +83,7 @@ process.stdin.on("data", (chunk) => {
     buf = buf.subarray(len);
     handleLine(body);
   }
-})
-.on("end", () => process.exit(0));
+}).on("end", () => process.exit(0));
 
 async function handleLine(line) {
   let msg;

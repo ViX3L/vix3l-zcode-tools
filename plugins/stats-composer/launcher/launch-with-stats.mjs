@@ -24,7 +24,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { candidateAppBinaries, appRootFromEnv, appBinaryFor } from "../scripts/lib/runtime.mjs";
+import { candidateAppBinaries, appRootFromEnv, appBinaryFor } from "../scripts/lib/launcher.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);

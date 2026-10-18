@@ -1,0 +1,37 @@
+.uc-wrap { display: inline-flex; align-items: center; gap: 2px; margin-left: 2px; }
+.uc-div { width: 1px; align-self: stretch; margin: 2px 6px 2px 4px; background: transparent; border-left: 1px solid rgba(255,255,255,.14); display: inline-block; }
+.uc-chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 7px; border-radius: 7px;
+  font-size: var(--ui-font-size, 14px); line-height: 1.5; color: rgb(148 163 184);
+  border: 1px solid rgb(255 255 255 / .10); background: rgb(255 255 255 / .03);
+  font-variant-numeric: tabular-nums; cursor: default; user-select: none; white-space: nowrap; }
+.uc-chip:hover { color: rgb(226 232 240); background: rgb(255 255 255 / .07); }
+.uc-chip .uc-ico { opacity: .8; font-size: .92em; }
+.uc-chip .uc-val { color: rgb(226 232 240); }
+.uc-wrap.uc-unknown .uc-chip { opacity: .5; }
+/* Hover card. Theme copied from the app's own usage panels: neutral #2b2b2b
+   surface, 12px radius, 1px hairline, rows on a 6px rhythm, mono values,
+   60%-white labels. The host is a 0x0 fixed anchor at the chip, so the card
+   must be position:absolute to escape that zero box. */
+.uc-card-host { position: fixed; z-index: 2147483000; }
+/* The card sizes to its CONTENT; max-width is only a viewport guard, past
+   which values wrap instead of painting outside the surface. */
+.uc-card { position: absolute; left: 0; top: 0; width: max-content;
+  min-width: 17em; max-width: min(92vw, 46em);
+  background: #2b2b2b; border: 1px solid rgba(255,255,255,.1); border-radius: 12px;
+  padding: 12px; box-shadow: 0 8px 28px rgba(0,0,0,.45); color: #f8f8f8;
+  font-family: var(--font-sans, system-ui, sans-serif); font-size: var(--ui-font-size, 14px);
+  line-height: 1.6; }
+.uc-ch { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  margin-bottom: 10px; }
+.uc-ct { font-weight: var(--font-weight-medium, 500); color: #f8f8f8; white-space: nowrap; }
+.uc-cico { margin-right: 5px; }
+.uc-ch .uc-cv { font-family: var(--font-mono, ui-monospace, monospace); color: rgba(248,248,248,.85);
+  font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; }
+.uc-sep { height: 1px; background: rgba(255,255,255,.1); margin: 0 0 10px 0; }
+.uc-cr { display: flex; align-items: baseline; gap: 10px; min-height: 1.6em; }
+.uc-cd { width: .6em; height: .6em; border-radius: .3em; background: rgba(255,255,255,.28);
+  flex: none; align-self: center; }
+.uc-cl { flex: none; white-space: nowrap; color: rgba(248,248,248,.6); }
+.uc-cvv { flex: 1 1 auto; min-width: 0; text-align: right; color: #f8f8f8;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
