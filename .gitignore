@@ -14,6 +14,9 @@ llm-wiki.md
 skills-lock.json 
 node_modules
 
+# working plans stay local; the enforced contract is .github/quality/baseline.md
+QUALITY_PLAN.md
+
 # release/packaging output (written by .github/scripts/package-plugin.sh and the
 # release tooling tests; never committed — the release workflow builds it fresh)
 dist/

@@ -1,0 +1,5 @@
+# Exemptions from the mechanical quality gates.
+#
+# One entry per line: <glob> # <reason>. The loader rejects an entry without a
+# written reason, because an unexplained exemption is how a gate quietly dies.
+# Generated copies are handled by scripts/sync-shared.mjs --check, not here.
