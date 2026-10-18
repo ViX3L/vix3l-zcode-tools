@@ -16,6 +16,17 @@ wiki (`wiki/log.md`), which is where the pre-git history of the plugin lives.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-10-18
+
+### Fixed
+
+- **The pill and the sidecar now start when ZCode resumes a chat.** The
+  SessionStart hook was registered for `startup|clear` only. ZCode reports a
+  restored chat as `resume`, so reopening the app into an existing session ran
+  no hook at all: the sidecar was never started and the pill stayed on the
+  fallback line for the whole session. The matcher now covers
+  `startup|resume|clear|compact`.
+
 ## [0.1.20] - 2026-10-17
 
 ### Fixed

@@ -16,6 +16,18 @@ Entries for `0.1.0` are condensed from the project's own engineering wiki
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-18
+
+### Fixed
+
+- **The chips now come up when ZCode resumes a chat.** The SessionStart matcher
+  was `startup|clear`; a restored chat reports `resume`, so the hook never ran
+  and the injector was never started.
+- **The hook no longer loses the startup race.** stats-composer spawns the
+  shared sidecar without waiting, so a single probe could conclude the sidecar
+  was absent while it was still binding. The hook now polls for up to 2 s and
+  re-reads the port file on each attempt.
+
 ## [0.1.3] - 2026-10-17
 
 ### Fixed

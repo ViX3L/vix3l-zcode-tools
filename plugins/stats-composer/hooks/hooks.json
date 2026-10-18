@@ -3,7 +3,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|clear",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "process",

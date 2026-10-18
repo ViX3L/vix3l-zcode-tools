@@ -37,6 +37,25 @@ function sidecarPort(cfg) {
   return Number(cfg.sidecarPort) || 7427;
 }
 
+// stats-composer's own SessionStart hook starts the sidecar without waiting,
+// and both plugins' hooks fire in the same burst. A single probe therefore
+// races the sidecar's startup: if this hook wins, the chips stay hidden for the
+// whole session. Poll briefly instead. The port file is re-read on every
+// attempt because a sidecar configured on a custom port publishes it only once
+// it has bound.
+const SIDECAR_WAIT_MS = 2000;
+const SIDECAR_POLL_MS = 100;
+
+async function waitForSidecar(cfg) {
+  const deadline = Date.now() + SIDECAR_WAIT_MS;
+  for (;;) {
+    const port = sidecarPort(cfg);
+    if (await sidecarAlive(port, 500)) return { alive: true, port };
+    if (Date.now() >= deadline) return { alive: false, port };
+    await new Promise((r) => setTimeout(r, SIDECAR_POLL_MS));
+  }
+}
+
 function injectorRunning() {
   try {
     const l = JSON.parse(fs.readFileSync(path.join(RUN_DIR, "injector.lock"), "utf8"));
@@ -69,8 +88,7 @@ async function main() {
   }
 
   const cfg = readConfig();
-  const port = sidecarPort(cfg);
-  const alive = await sidecarAlive(port);
+  const { alive, port } = await waitForSidecar(cfg);
   // The chips need a data source; without the stats-composer sidecar there is
   // nothing to show, so do not start a doomed injector — tell the user instead.
   if (!alive) {

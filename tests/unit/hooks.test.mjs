@@ -80,6 +80,23 @@ async function reapInjector(home) {
   return 0;
 }
 
+test("both plugins' SessionStart hooks also run on resume and compact", () => {
+  // A restored chat reports SessionStart source "resume"; /compact reports
+  // "compact". A matcher of "startup|clear" therefore skips both, which is how
+  // the sidecar and injectors failed to start after reopening the app.
+  for (const [dir, name] of [[STATS, "stats-composer"], [USAGE, "usage-context"]]) {
+    const m = JSON.parse(fs.readFileSync(path.join(dir, "hooks", "hooks.json"), "utf8"));
+    const groups = m.hooks.SessionStart;
+    assert.ok(Array.isArray(groups) && groups.length, `${name}: no SessionStart hook`);
+    const matcher = groups.map((g) => g.matcher).find(Boolean);
+    assert.ok(matcher, `${name}: SessionStart needs a matcher`);
+    const re = new RegExp(matcher);
+    for (const source of ["startup", "resume", "clear", "compact"]) {
+      assert.ok(re.test(source), `${name}: matcher "${matcher}" misses ${source}`);
+    }
+  }
+});
+
 test("stats session-start emits valid JSON and records the session", async () => {
   const home = sandbox();
   writeConfig(home, { mode: "skill" }); // skill mode: no sidecar spawn
@@ -227,6 +244,53 @@ test("usage-context session-start reports success (empty context) when the sidec
   const pid = await reapInjector(home);
   await new Promise((r2) => server.close(r2));
   assert.ok(pid > 0, "a reachable sidecar must make the hook start an injector");
+});
+
+test("usage-context session-start waits for a sidecar that starts just after the hook", async () => {
+  // stats-composer starts the sidecar without waiting, so on startup/resume the
+  // two hooks race. This hook used to probe once and give up for the session.
+  const home = sandbox();
+  const { createServer } = await import("node:http");
+  // Reserve a free port, then release it so the delayed server can take it.
+  const probeServer = createServer();
+  await new Promise((r) => probeServer.listen(0, "127.0.0.1", r));
+  const port = probeServer.address().port;
+  await new Promise((r) => probeServer.close(r));
+  writeConfig(home, { sidecarPort: port });
+
+  let server;
+  let serverError;
+  let r;
+  let pid;
+  const delayed = setTimeout(() => {
+    server = createServer((req, res) => {
+      res.writeHead(req.url === "/health" ? 200 : 404, { "Content-Type": "application/json" });
+      res.end("{}");
+    });
+    // Record a listen failure instead of swallowing it: a port collision must
+    // fail the assertion below, not masquerade as "sidecar absent".
+    server.on("error", (e) => { serverError = e; });
+    server.listen(port, "127.0.0.1");
+  }, 600);
+
+  try {
+    r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
+      env: baseEnv(home),
+      stdin: JSON.stringify({ session_id: "sess_hook_wait" }),
+    });
+    // The reachable sidecar makes the hook spawn a real injector; reap it before
+    // closing the server so it cannot attach to anything else.
+    pid = await reapInjector(home);
+  } finally {
+    clearTimeout(delayed);
+    if (server) await new Promise((r2) => server.close(r2));
+  }
+  assert.equal(serverError, undefined, "the delayed sidecar failed to start");
+  assert.equal(r.code, 0);
+  const msg = JSON.parse(r.stdout);
+  assert.equal(msg.hookSpecificOutput.additionalContext, "",
+    "the hook must wait for the sidecar instead of reporting it absent");
+  assert.ok(pid > 0, "once the sidecar answers, the injector must be started");
 });
 
 test("both session-start hooks survive malformed stdin", async () => {
