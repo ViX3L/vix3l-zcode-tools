@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { REPO_ROOT, CHANGELOG_NOTES, STATS_CHANGELOG, USAGE_CHANGELOG, ROOT_CHANGELOG, STATS_PLUGIN_JSON, USAGE_PLUGIN_JSON, readJson } from "../lib/paths.mjs";
+import { execFailure } from "../lib/exec.mjs";
 
 const read = (p) => fs.readFileSync(p, "utf8");
 
@@ -19,12 +20,7 @@ function notes(plugin, version) {
   return execFileSync(process.execPath, [CHANGELOG_NOTES, plugin, version], { cwd: REPO_ROOT, encoding: "utf8" });
 }
 function notesFail(plugin, version) {
-  try {
-    execFileSync(process.execPath, [CHANGELOG_NOTES, plugin, version], { cwd: REPO_ROOT, encoding: "utf8", stdio: "pipe" });
-    return null;
-  } catch (e) {
-    return String(e.stderr || e.stdout || e.message);
-  }
+  return execFailure(CHANGELOG_NOTES, [plugin, version]);
 }
 
 test("every plugin ships a changelog and the root index points at it", () => {

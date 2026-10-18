@@ -8,10 +8,10 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { REPO_ROOT, RELEASE_PLAN, PACKAGE_PLUGIN_SH, readJson, STATS_PLUGIN_JSON, USAGE_PLUGIN_JSON, ROOT_MARKETPLACE } from "../lib/paths.mjs";
+import { execFailure } from "../lib/exec.mjs";
 
 const statsV = readJson(STATS_PLUGIN_JSON).version;
 const usageV = readJson(USAGE_PLUGIN_JSON).version;
@@ -25,12 +25,7 @@ function plan(tag) {
   return { matrix: JSON.parse(line.slice("matrix=".length)), any };
 }
 function planFails(tag) {
-  try {
-    execFileSync(process.execPath, [RELEASE_PLAN, tag], { cwd: REPO_ROOT, encoding: "utf8", stdio: "pipe" });
-    return null;
-  } catch (e) {
-    return String(e.stderr || e.stdout || e.message);
-  }
+  return execFailure(RELEASE_PLAN, [tag]);
 }
 
 test("a repo-wide tag plans every plugin at its own manifest version", () => {

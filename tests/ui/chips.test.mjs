@@ -11,7 +11,7 @@
 import { test, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  newPage, closeBrowser, install, until, deepText, deepAll, deepRects, hover,
+  newPage, closeBrowser, install, until, deepText, deepAll, hover,
   ucCardVisible, ucCardGeom, conversationHtml,
 } from "../lib/browser.mjs";
 import { startMockSidecar, sampleTurns } from "../lib/mock-sidecar.mjs";
@@ -523,6 +523,68 @@ test("a chip outlives a footer the app is re-rendering without its timestamp", a
   assert.equal(kept.wraps, 1, "an unreadable footer must not cost the chip");
   assert.equal(kept.connected, true);
   assert.equal(kept.val, "729K tok", "and it must keep the figure it already had");
+});
+
+test("24-hour timestamps anchor the chips too", async () => {
+  // The app's clock format is a user setting; a footer reading "14:46" must be
+  // recognised exactly like "02:46 PM", or half the users get no chips.
+  const page = await newPage(conversationHtml({ turnIds: ["msg_1"] }));
+  await page.evaluate(() => { document.querySelector(".ts").textContent = "14:46"; });
+  const { script, css } = usageChips(mock.port, {});
+  await install(page, { script, css });
+  await settled(page);
+  assert.equal(await deepText(page, ".uc-usage-val"), "729K tok");
+});
+
+test("showRanFor:false keeps the token chip and drops the clock chip", async () => {
+  const page = await newPage(conversationHtml({ turnIds: ["msg_1"] }));
+  const { script, css } = usageChips(mock.port, { showRanFor: false });
+  await install(page, { script, css });
+  await settled(page);
+  assert.equal(await deepText(page, ".uc-usage-val"), "729K tok");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".uc-time").length), 0,
+    "the clock chip must not render when showRanFor is off");
+  assert.deepEqual(page.__errors, []);
+});
+
+test("showChips:false removes chips that a previous generation painted", async () => {
+  // Turning the chips off must clean the page, not merely stop painting: the
+  // previous sweep's nodes are still in the DOM.
+  const page = await chipsPage({ html: { turnIds: ["msg_1"] } });
+  await settled(page);
+  const { script, css } = usageChips(mock.port, { showChips: false });
+  assert.equal(await install(page, { script, css }), "disabled");
+  const left = await page.evaluate(() => ({
+    wraps: document.querySelectorAll(".uc-wrap").length,
+    hosts: document.querySelectorAll(".uc-card-host").length,
+  }));
+  assert.equal(left.wraps, 0, "the disabled generation must sweep the old chips");
+  assert.equal(left.hosts, 0, "and the old card host");
+});
+
+test("sidecar-provided model names are escaped in the panel", async () => {
+  // Model names come from the usage DB, not from this page, but they are still
+  // untrusted text. The panel must show them, never execute them.
+  mock.set({
+    turns: sampleTurns({
+      turns: [{ ...sampleTurns().turns[0], model: '<img src=x onerror="window.__uc_pwned=1">' }],
+    }),
+  });
+  const page = await chipsPage({ html: { turnIds: ["msg_1"] } });
+  await settled(page);
+  await hover(page, ".uc-usage");
+  assert.equal(await ucCardVisible(page), true);
+  const shown = await page.evaluate(() => {
+    const c = document.querySelector(".uc-card");
+    return {
+      text: c.textContent,
+      imgs: c.querySelectorAll("img").length,
+      pwned: window.__uc_pwned === 1,
+    };
+  });
+  assert.ok(shown.text.includes("<img src=x"), "the raw text must be visible: " + shown.text);
+  assert.equal(shown.imgs, 0, "markup must never become a node");
+  assert.equal(shown.pwned, false);
 });
 
 test("the script's VERSION is a non-empty identity", async () => {

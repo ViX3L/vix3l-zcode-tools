@@ -205,17 +205,3 @@ export function cleanup(machine) {
   try { machine.db && machine.db.close(); } catch {}
   try { fs.rmSync(machine.dir, { recursive: true, force: true }); } catch {}
 }
-
-// The HOME a child process under test should see: temp dirs for every state
-// file the plugins touch, so the developer's ~/.zcode is never consulted.
-export function testEnv(machine, extra = {}) {
-  return {
-    ...process.env,
-    HOME: machine.dir,
-    USERPROFILE: machine.dir,
-    ZCODE_USAGE_DB: machine.dbPath,
-    TPS_MONITOR_STATE_FILE: path.join(machine.dir, "tps-monitor.last-session.json"),
-    STATS_SIDECAR_PLUGIN_ROOT: undefined,
-    ...extra,
-  };
-}

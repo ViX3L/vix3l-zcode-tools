@@ -20,9 +20,8 @@ let machine, sidecar, emptyMachine, emptySidecar;
 // Write the state file the sidecar reads to resolve a default session (it is
 // the same one the plugin's session-start hook writes).
 function writeSessionState(m, sid) {
-  const dir = path.join(m.dir, ".zcode");
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "tps-monitor.last-session.json"),
+  // childEnv points TPS_MONITOR_STATE_FILE at the fixture home.
+  fs.writeFileSync(path.join(m.dir, "tps-monitor.last-session.json"),
     JSON.stringify({ sessionId: sid, ts: Date.now(), source: "test" }));
 }
 

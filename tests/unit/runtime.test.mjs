@@ -10,10 +10,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { STATS_RUNTIME, USAGE_RUNTIME } from "../lib/paths.mjs";
+import { STATS_RUNTIME, USAGE_RUNTIME, STATS_LAUNCHER } from "../lib/paths.mjs";
+import { startHttpStub } from "../lib/health-stub.mjs";
 
 const R = await import(STATS_RUNTIME);
 const R2 = await import(USAGE_RUNTIME);
+const L = await import(STATS_LAUNCHER);
 
 test("appRootFromEnv recovers the app root on every platform's path shape", () => {
   // The marker ZCode exports is <root>/resources/tools/<tool>/<bin>.
@@ -24,54 +26,54 @@ test("appRootFromEnv recovers the app root on every platform's path shape", () =
     ["win32", "C:\\Users\\u\\AppData\\Local\\Programs\\ZCode\\resources\\tools\\bfs\\bfs.exe", "ZCODE_BFS_BINARY", "C:\\Users\\u\\AppData\\Local\\Programs\\ZCode"],
   ];
   for (const [platform, value, key, expected] of cases) {
-    assert.equal(R.appRootFromEnv({ [key]: value }, platform), expected, `${platform}: ${value}`);
+    assert.equal(L.appRootFromEnv({ [key]: value }, platform), expected, `${platform}: ${value}`);
   }
   // The separator must follow the TARGET platform, not the host: a Windows path
   // examined with a "/" marker would not match.
-  assert.equal(R.appRootFromEnv({ ZCODE_BFS_BINARY: "C:\\App\\resources\\tools\\bfs\\bfs.exe" }, "darwin"), null);
+  assert.equal(L.appRootFromEnv({ ZCODE_BFS_BINARY: "C:\\App\\resources\\tools\\bfs\\bfs.exe" }, "darwin"), null);
 });
 
 test("appRootFromEnv prefers the LAST marker (the innermost tools dir)", () => {
   const v = "/home/u/resources/tools/x/resources/tools/bfs/bfs";
-  assert.equal(R.appRootFromEnv({ ZCODE_BFS_BINARY: v }, "linux"), "/home/u/resources/tools/x");
+  assert.equal(L.appRootFromEnv({ ZCODE_BFS_BINARY: v }, "linux"), "/home/u/resources/tools/x");
 });
 
 test("appRootFromEnv returns null rather than guessing", () => {
-  assert.equal(R.appRootFromEnv({}, "linux"), null);
-  assert.equal(R.appRootFromEnv({ ZCODE_BFS_BINARY: "/usr/bin/bfs" }, "linux"), null);
-  assert.equal(R.appRootFromEnv({ ZCODE_OTHER: "/opt/ZCode/resources/tools/bfs/bfs" }, "linux"), null);
+  assert.equal(L.appRootFromEnv({}, "linux"), null);
+  assert.equal(L.appRootFromEnv({ ZCODE_BFS_BINARY: "/usr/bin/bfs" }, "linux"), null);
+  assert.equal(L.appRootFromEnv({ ZCODE_OTHER: "/opt/ZCode/resources/tools/bfs/bfs" }, "linux"), null);
 });
 
 test("appBinaryFor maps an app root to the GUI executable per platform", () => {
-  assert.equal(R.appBinaryFor("/opt/ZCode", "linux"), path.join("/opt/ZCode", "zcode"));
+  assert.equal(L.appBinaryFor("/opt/ZCode", "linux"), path.join("/opt/ZCode", "zcode"));
   assert.equal(
-    R.appBinaryFor("/Applications/ZCode.app/Contents/Resources", "darwin"),
+    L.appBinaryFor("/Applications/ZCode.app/Contents/Resources", "darwin"),
     "/Applications/ZCode.app/Contents/MacOS/ZCode"
   );
   assert.equal(
-    R.appBinaryFor("C:\\Program Files\\ZCode", "win32"),
+    L.appBinaryFor("C:\\Program Files\\ZCode", "win32"),
     path.join("C:\\Program Files\\ZCode", "ZCode.exe")
   );
   // A Darwin root that is not inside a .app cannot yield a binary path.
-  assert.equal(R.appBinaryFor("/opt/ZCode", "darwin"), null);
-  assert.equal(R.appBinaryFor(null, "linux"), null);
+  assert.equal(L.appBinaryFor("/opt/ZCode", "darwin"), null);
+  assert.equal(L.appBinaryFor(null, "linux"), null);
 });
 
 test("candidateAppBinaries lists the conventional install locations per platform", () => {
-  const linux = R.candidateAppBinaries("linux", {});
+  const linux = L.candidateAppBinaries("linux", {});
   assert.ok(linux.includes("/opt/ZCode/zcode"));
   assert.ok(linux.some((p) => p.endsWith(".local/bin/zcode")));
 
-  const mac = R.candidateAppBinaries("darwin", {});
+  const mac = L.candidateAppBinaries("darwin", {});
   assert.ok(mac.includes("/Applications/ZCode.app/Contents/MacOS/ZCode"));
 
-  const win = R.candidateAppBinaries("win32", { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local", ProgramFiles: "C:\\Program Files" });
+  const win = L.candidateAppBinaries("win32", { LOCALAPPDATA: "C:\\Users\\u\\AppData\\Local", ProgramFiles: "C:\\Program Files" });
   assert.ok(win.includes(path.join("C:\\Users\\u\\AppData\\Local", "Programs", "ZCode", "ZCode.exe")), win.join(" | "));
 });
 
 test("candidateAppBinaries puts the env-derived binary first", () => {
   const env = { ZCODE_RG_BINARY: "/opt/ZCode/resources/tools/ripgrep/rg" };
-  assert.equal(R.candidateAppBinaries("linux", env)[0], "/opt/ZCode/zcode");
+  assert.equal(L.candidateAppBinaries("linux", env)[0], "/opt/ZCode/zcode");
 });
 
 test("childEnv re-asserts ELECTRON_RUN_AS_NODE and quiets the sqlite warning", () => {
@@ -119,13 +121,15 @@ test("both plugins expose the identical runtime surface", async () => {
   // forgotten in the other is exactly the drift these two tests exist for.
   const fns = [
     "nodeExecutable", "childEnv", "spawnDetachedNode", "spawnAttachedNode",
-    "spawnNodePiped", "sidecarAlive", "appRootFromEnv", "appBinaryFor",
-    "candidateAppBinaries",
+    "spawnNodePiped", "sidecarAlive",
   ];
   for (const [plugin, mod] of [["stats-composer", R], ["usage-context", R2]]) {
     for (const fn of fns) {
       assert.equal(typeof mod[fn], "function", `${plugin} runtime is missing ${fn}`);
     }
+  }
+  for (const fn of ["appRootFromEnv", "appBinaryFor", "candidateAppBinaries"]) {
+    assert.equal(typeof L[fn], "function", `stats-composer launcher is missing ${fn}`);
   }
 });
 
@@ -133,15 +137,13 @@ test("sidecarAlive answers for a listening sidecar, a closed port and no port", 
   // The one probe both injectors' launch gate and three hooks share: "is the
   // sidecar answering on this port?" A wrong answer here either starts an
   // injector with nothing to read or leaves the chips with no data source.
-  const { createServer } = await import("node:http");
-  const server = createServer((req, res) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const port = server.address().port;
+  const stub = await startHttpStub();
+  const port = stub.port;
   try {
     assert.equal(await R2.sidecarAlive(port), true, "a listening sidecar is alive");
     assert.equal(await R.sidecarAlive(port), true, "both copies must agree");
   } finally {
-    await new Promise((r) => server.close(r));
+    await stub.close();
   }
   assert.equal(await R2.sidecarAlive(port), false, "a closed port is not alive");
   assert.equal(await R2.sidecarAlive(null), false, "no port is not alive");

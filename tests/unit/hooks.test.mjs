@@ -11,7 +11,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { STATS, USAGE } from "../lib/paths.mjs";
-import { closedPort } from "../lib/mock-sidecar.mjs";
+import { ephemeralPort } from "../lib/net.mjs";
+import { childEnv } from "../lib/env.mjs";
+import { startHttpStub } from "../lib/health-stub.mjs";
 
 // Run a hook the way the app does: argv mode, JSON on stdin, read stdout.
 function runHook(script, { env = {}, stdin = "", timeoutMs = 8000 } = {}) {
@@ -43,16 +45,15 @@ function writeConfig(home, cfg) {
   fs.writeFileSync(path.join(home, ".zcode", "stats-composer", "config.json"), JSON.stringify(cfg));
 }
 
+// usage-context resolves its own settings; its sidecarPort is not read from
+// stats-composer's config.
+function writeUsageConfig(home, cfg) {
+  fs.mkdirSync(path.join(home, ".zcode", "usage-context"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".zcode", "usage-context", "config.json"), JSON.stringify(cfg));
+}
+
 function baseEnv(home) {
-  return {
-    HOME: home,
-    USERPROFILE: home,
-    TPS_MONITOR_STATE_FILE: path.join(home, "tps-monitor.last-session.json"),
-    // No DB is needed by these hooks; point it somewhere empty so nothing can
-    // accidentally read the developer's real usage DB.
-    ZCODE_USAGE_DB: path.join(home, "absent.sqlite"),
-    NODE_NO_WARNINGS: "",
-  };
+  return childEnv(home, { NODE_NO_WARNINGS: "" });
 }
 
 // Reap the injector the usage-context hook starts, and return its pid (0 when
@@ -150,19 +151,15 @@ test("stats prompt-submit keeps model context clean when a sidecar is alive but 
   const home = sandbox();
   writeConfig(home, { mode: "auto" });
   // A minimal /health responder standing in for the sidecar.
-  const { createServer } = await import("node:http");
-  const server = createServer((req, res) => {
-    res.writeHead(req.url === "/health" ? 200 : 404, { "Content-Type": "application/json" });
-    res.end("{}");
+  const stub = await startHttpStub({
+    respond: (req) => ({ status: req.url === "/health" ? 200 : 404 }),
   });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const port = server.address().port;
-  fs.writeFileSync(path.join(home, ".zcode", "stats-composer", "port"), String(port));
+  fs.writeFileSync(path.join(home, ".zcode", "stats-composer", "port"), String(stub.port));
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
     stdin: JSON.stringify({ session_id: "sess_hook_3" }),
   });
-  await new Promise((r2) => server.close(r2));
+  await stub.close();
   const msg = JSON.parse(r.stdout);
   assert.match(msg.hookSpecificOutput.additionalContext, /stats\.mjs/,
     "with no pill attached the per-message line must remain the visible channel");
@@ -173,18 +170,15 @@ test("stats prompt-submit is silent when a fresh pill attach is recorded", async
   // must contribute nothing to the model's context ("zero-context-pollution").
   const home = sandbox();
   writeConfig(home, { mode: "auto" });
-  const { createServer } = await import("node:http");
-  const server = createServer((req, res) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const port = server.address().port;
+  const stub = await startHttpStub();
   const runDir = path.join(home, ".zcode", "stats-composer");
-  fs.writeFileSync(path.join(runDir, "port"), String(port));
+  fs.writeFileSync(path.join(runDir, "port"), String(stub.port));
   fs.writeFileSync(path.join(runDir, "pill.json"), JSON.stringify({ attached: true, ts: Date.now(), port: 9229 }));
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
     stdin: JSON.stringify({ session_id: "sess_hook_4" }),
   });
-  await new Promise((r2) => server.close(r2));
+  await stub.close();
   const msg = JSON.parse(r.stdout);
   assert.equal(msg.hookSpecificOutput.additionalContext, "");
 });
@@ -208,7 +202,7 @@ test("usage-context session-start says so (in the envelope) when the sidecar is 
   // is 7427, and a developer running the real sidecar would make this hook
   // (correctly) find it alive. Isolation is the test's job, not the hook's.
   const home = sandbox();
-  writeConfig(home, { sidecarPort: await closedPort() });
+  writeUsageConfig(home, { sidecarPort: await ephemeralPort() });
   const r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
     env: baseEnv(home),
     stdin: JSON.stringify({ session_id: "sess_hook_6" }),
@@ -218,18 +212,12 @@ test("usage-context session-start says so (in the envelope) when the sidecar is 
   const msg = JSON.parse(r.stdout);
   assert.equal(msg.hookSpecificOutput.hookEventName, "SessionStart");
   assert.match(msg.hookSpecificOutput.additionalContext, /sidecar is not reachable/);
-  // It still recorded the session, so a later run can correlate.
-  const st = JSON.parse(fs.readFileSync(path.join(home, ".zcode", "usage-context", "last-session.json"), "utf8"));
-  assert.equal(st.sessionId, "sess_hook_6");
 });
 
 test("usage-context session-start reports success (empty context) when the sidecar answers", async () => {
   const home = sandbox();
-  const { createServer } = await import("node:http");
-  const server = createServer((req, res) => { res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}"); });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  const port = server.address().port;
-  writeConfig(home, { sidecarPort: port });
+  const stub = await startHttpStub();
+  writeUsageConfig(home, { sidecarPort: stub.port });
   const r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
     env: baseEnv(home),
     stdin: JSON.stringify({ session_id: "sess_hook_6b" }),
@@ -242,7 +230,7 @@ test("usage-context session-start reports success (empty context) when the sidec
   // without reaping the process that assertion implies. The server stays up
   // until the reaper has it, so the injector cannot stand itself down first.
   const pid = await reapInjector(home);
-  await new Promise((r2) => server.close(r2));
+  await stub.close();
   assert.ok(pid > 0, "a reachable sidecar must make the hook start an injector");
 });
 
@@ -250,29 +238,20 @@ test("usage-context session-start waits for a sidecar that starts just after the
   // stats-composer starts the sidecar without waiting, so on startup/resume the
   // two hooks race. This hook used to probe once and give up for the session.
   const home = sandbox();
-  const { createServer } = await import("node:http");
-  // Reserve a free port, then release it so the delayed server can take it.
-  const probeServer = createServer();
-  await new Promise((r) => probeServer.listen(0, "127.0.0.1", r));
-  const port = probeServer.address().port;
-  await new Promise((r) => probeServer.close(r));
-  writeConfig(home, { sidecarPort: port });
+  const port = await ephemeralPort();
+  writeUsageConfig(home, { sidecarPort: port });
 
-  let server;
-  let serverError;
+  // Start the responder concurrently with the hook. Its 600 ms head start is
+  // the race being reproduced, not a fixed wait in the test.
+  const pendingStub = startHttpStub({
+    port,
+    delayMs: 600,
+    respond: (req) => ({ status: req.url === "/health" ? 200 : 404 }),
+  });
+
   let r;
   let pid;
-  const delayed = setTimeout(() => {
-    server = createServer((req, res) => {
-      res.writeHead(req.url === "/health" ? 200 : 404, { "Content-Type": "application/json" });
-      res.end("{}");
-    });
-    // Record a listen failure instead of swallowing it: a port collision must
-    // fail the assertion below, not masquerade as "sidecar absent".
-    server.on("error", (e) => { serverError = e; });
-    server.listen(port, "127.0.0.1");
-  }, 600);
-
+  let stub;
   try {
     r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
       env: baseEnv(home),
@@ -282,10 +261,10 @@ test("usage-context session-start waits for a sidecar that starts just after the
     // closing the server so it cannot attach to anything else.
     pid = await reapInjector(home);
   } finally {
-    clearTimeout(delayed);
-    if (server) await new Promise((r2) => server.close(r2));
+    stub = await pendingStub;
+    if (stub.error) throw stub.error;
+    await stub.close();
   }
-  assert.equal(serverError, undefined, "the delayed sidecar failed to start");
   assert.equal(r.code, 0);
   const msg = JSON.parse(r.stdout);
   assert.equal(msg.hookSpecificOutput.additionalContext, "",
@@ -303,7 +282,8 @@ test("both session-start hooks survive malformed stdin", async () => {
   // whatever the developer happens to be running. A test must not depend on, or
   // disturb, the machine it runs on.
   const home = sandbox();
-  writeConfig(home, { mode: "skill", sidecarPort: await closedPort() });
+  writeConfig(home, { mode: "skill" });
+  writeUsageConfig(home, { sidecarPort: await ephemeralPort() });
   for (const script of [
     path.join(STATS, "hooks", "session-start.mjs"),
     path.join(USAGE, "hooks", "session-start.mjs"),

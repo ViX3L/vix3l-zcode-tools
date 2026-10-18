@@ -17,6 +17,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { ephemeralPort } from "./net.mjs";
+import { pollUntil } from "./poll.mjs";
 
 let _exe;
 async function chromiumExe() {
@@ -27,16 +29,6 @@ async function chromiumExe() {
   return _exe;
 }
 
-export async function freePort() {
-  const { createServer } = await import("node:net");
-  return await new Promise((resolve) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = s.address().port;
-      s.close(() => resolve(p));
-    });
-  });
-}
 
 // Write a page under a path that matches the injector's app-renderer filter.
 export function writeAppPage(dir, name, html) {
@@ -51,7 +43,7 @@ export function writeAppPage(dir, name, html) {
 // the port, the child, and a close().
 export async function launchCdpBrowser({ url, port, headless = true, extraArgs = [] } = {}) {
   const exe = await chromiumExe();
-  const p = port || (await freePort());
+  const p = port || (await ephemeralPort());
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "zstats-chrome-"));
   const args = [
     `--remote-debugging-port=${p}`,
@@ -67,16 +59,14 @@ export async function launchCdpBrowser({ url, port, headless = true, extraArgs =
   const child = spawn(exe, args, { stdio: ["ignore", "ignore", "pipe"] });
   let err = "";
   child.stderr.on("data", (c) => (err += c.toString()));
-  const deadline = Date.now() + 15_000;
-  let ready = false;
-  while (Date.now() < deadline) {
-    try {
+  try {
+    await pollUntil(async () => {
       const r = await fetch(`http://127.0.0.1:${p}/json/version`, { signal: AbortSignal.timeout(500) });
-      if (r.ok) { ready = true; break; }
-    } catch {}
-    await new Promise((r) => setTimeout(r, 80));
+      return r.ok;
+    }, { timeout: 15_000, interval: 80, label: "chromium CDP port" });
+  } catch (e) {
+    throw new Error(`${e.message}: ${err.slice(-400)}`);
   }
-  if (!ready) throw new Error("chromium did not expose a CDP port: " + err.slice(-400));
   return {
     port: p,
     child,

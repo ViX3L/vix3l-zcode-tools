@@ -20,7 +20,8 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { REPO_ROOT, STATS_INJECTOR, USAGE_INJECTOR } from "../lib/paths.mjs";
 import { writeAppPage, launchCdpBrowser, evaluateInPage } from "../lib/cdp.mjs";
-import { closedPort, startMockSidecar } from "../lib/mock-sidecar.mjs";
+import { startMockSidecar } from "../lib/mock-sidecar.mjs";
+import { ephemeralPort } from "../lib/net.mjs";
 
 // The page the injectors will find: the composer DOM the pill needs AND the
 // assistant-turn DOM the chips need, plus the app-shell markers. The zcode
@@ -163,7 +164,7 @@ test("the chips injector stands down when its sidecar is not answering", async (
   // out of the DOM while polling a port nothing answers on. Measured live
   // before this gate existed: one such orphan traded the page with the real
   // injector every ~10 s and blanked the user's chips on every trade.
-  const dead = await closedPort();
+  const dead = await ephemeralPort();
   const { code, out } = await runInjector(USAGE_INJECTOR, [
     "--port", String(browser.port), "--sidecar-port", String(dead),
   ]);
@@ -182,7 +183,7 @@ test("the pill injector stands down when its sidecar is not answering", async ()
   // pointed at a dead port supersedes the healthy one and repaints the composer
   // from nothing. No attach state in a FRESH home is the proof it never reached
   // the app at all.
-  const dead = await closedPort();
+  const dead = await ephemeralPort();
   const { code, out, home } = await runInjector(STATS_INJECTOR, [
     "--port", String(browser.port), "--sidecar-port", String(dead),
   ]);

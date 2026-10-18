@@ -9,7 +9,7 @@
 import { test, before, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import {
-  newPage, closeBrowser, install, until, deepText, deepAll, deepRects, hover, unhover,
+  newPage, closeBrowser, install, until, deepText, hover, unhover,
   cardVisible, composerHtml,
 } from "../lib/browser.mjs";
 import { startMockSidecar, sampleSnapshot } from "../lib/mock-sidecar.mjs";
@@ -26,7 +26,7 @@ after(async () => { await mock.close(); await closeBrowser(); });
 // Boot a page with the pill script installed and its first snapshot painted.
 async function pillPage(opts = {}) {
   const layout = opts.layout || "wide";
-  const { script, css } = statsPill(layout, mock.port);
+  const { script, css } = statsPill(layout, mock.port, opts.position || "left");
   const page = await newPage(composerHtml(opts.html || {}));
   await install(page, { script, css });
   await until(page, () => !!document.querySelector(".zcode-stats-pill-host"), { label: "pill host" });
@@ -387,6 +387,29 @@ test("no page errors across a full hover cycle and a live update", async () => {
   mock.set({ stats: sampleSnapshot({ live: { streaming: true, estTps: 99, model: "m" } }) });
   await page.waitForTimeout(1200); // at least one poll
   assert.deepEqual(page.__errors, []);
+});
+
+test("the pill follows the configured side without a re-install", async () => {
+  // The position setting is baked into the generation identity, so a saved
+  // change reaches the page on the next sweep. Left is the default and must
+  // stay class-free; right is what the host class exposes.
+  const left = await pillPage();
+  await settled(left);
+  assert.equal(
+    await left.evaluate(() => document.querySelector(".zcode-stats-pill-host").classList.contains("right")),
+    false,
+    "the default left position must not carry the right class"
+  );
+  await left.close();
+
+  const right = await pillPage({ position: "right" });
+  await settled(right);
+  assert.equal(
+    await right.evaluate(() => document.querySelector(".zcode-stats-pill-host").classList.contains("right")),
+    true,
+    "position:right must move the pill"
+  );
+  assert.deepEqual(right.__errors, []);
 });
 
 test("the sidecar fetch is scoped to the session the app is showing", async () => {

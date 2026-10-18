@@ -46,10 +46,20 @@ test("the release workflow triggers on tag pushes and can be dispatched", () => 
   assert.match(yml, /contents: write/, "creating a Release needs contents: write");
 });
 
-test("the release workflow gates on the test suite before publishing", () => {
+test("the release workflow gates on the same reusable test job as CI", () => {
   const yml = read(RELEASE_WORKFLOW);
   assert.match(yml, /needs: \[test, plan\]/, "the release job must depend on the test and plan jobs");
-  assert.ok(/docker run/.test(yml) && /shm-size=1g/.test(yml), "the release gate must run the suite in the same container CI uses");
+  assert.match(yml, /uses: \.\/\.github\/workflows\/container-tests\.yml/, "the release gate must call the shared container job");
+  const shared = read(path.join(GITHUB_DIR, "workflows", "container-tests.yml"));
+  assert.ok(/docker run/.test(shared) && /shm-size=1g/.test(shared), "the shared job must run the suite in the container");
+});
+
+test("CI and Release share one container-test definition", () => {
+  for (const f of [CI_WORKFLOW, RELEASE_WORKFLOW]) {
+    const yml = read(f);
+    assert.ok(yml.includes("./.github/workflows/container-tests.yml"), `${path.basename(f)} must call the shared job`);
+    assert.ok(!/docker run/.test(yml), `${path.basename(f)} must not repeat the container command`);
+  }
 });
 
 test("the scripts the workflows call exist and are runnable", () => {

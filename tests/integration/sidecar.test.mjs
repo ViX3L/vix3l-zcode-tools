@@ -54,11 +54,9 @@ before(async () => {
   });
   db.close();
   // The hook-recorded session is how the sidecar resolves a default session.
-  // metrics.stateFile() defaults to <HOME>/.zcode/tps-monitor.last-session.json,
-  // and startSidecar sets HOME to the fixture dir — so that is where it goes.
-  const stateDir = path.join(machine.dir, ".zcode");
-  fs.mkdirSync(stateDir, { recursive: true });
-  fs.writeFileSync(path.join(stateDir, "tps-monitor.last-session.json"),
+  // childEnv points TPS_MONITOR_STATE_FILE at the fixture home, so that is
+  // where the hook would have written it.
+  fs.writeFileSync(path.join(machine.dir, "tps-monitor.last-session.json"),
     JSON.stringify({ sessionId: SID, ts: Date.now(), source: "test" }));
   sidecar = await startSidecar(machine, { config: { mode: "skill", window: 10 } });
   // Wait for the first snapshot to be complete (the refresher runs in the

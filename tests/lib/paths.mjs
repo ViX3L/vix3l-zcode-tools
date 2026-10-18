@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const TESTS_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const TESTS_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 export const REPO_ROOT = path.dirname(TESTS_DIR);
 
 export const STATS = path.join(REPO_ROOT, "plugins", "stats-composer");
@@ -20,15 +20,13 @@ export const USAGE_HOOKS = path.join(USAGE, "hooks", "hooks.json");
 export const STATS_MCP_JSON = path.join(STATS, ".mcp.json");
 export const STATS_MCP_SERVER = path.join(STATS, "mcp", "stats-server.mjs");
 export const STATS_SIDECAR = path.join(STATS, "sidecar", "server.mjs");
-export const STATS_METRICS = path.join(STATS, "scripts", "lib", "metrics.mjs");
-export const STATS_DOCTOR = path.join(STATS, "scripts", "doctor.mjs");
-export const STATS_CLI = path.join(STATS, "scripts", "stats.mjs");
 export const STATS_RUNTIME = path.join(STATS, "scripts", "lib", "runtime.mjs");
 export const USAGE_RUNTIME = path.join(USAGE, "scripts", "lib", "runtime.mjs");
+export const STATS_LAUNCHER = path.join(STATS, "scripts", "lib", "launcher.mjs");
+export const STATS_OPTIONS = path.join(STATS, "scripts", "lib", "options.mjs");
+export const USAGE_OPTIONS = path.join(USAGE, "scripts", "lib", "options.mjs");
 export const STATS_INJECTOR = path.join(STATS, "injector", "inject.mjs");
 export const USAGE_INJECTOR = path.join(USAGE, "injector", "inject.mjs");
-export const STATS_SKILL = path.join(STATS, "skills", "stats-composer", "SKILL.md");
-export const USAGE_SKILL = path.join(USAGE, "skills", "usage-context", "SKILL.md");
 
 export const GITHUB_DIR = path.join(REPO_ROOT, ".github");
 export const RELEASE_PLAN = path.join(GITHUB_DIR, "scripts", "release-plan.mjs");

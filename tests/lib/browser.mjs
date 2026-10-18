@@ -6,9 +6,6 @@
 //
 // The module also provides the fake composer/turn DOM the scripts expect, so a
 // test reads as "given this session and this DOM, the pill shows X".
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 let _pw;
 async function playwright() {
   if (!_pw) _pw = await import("playwright");
@@ -191,26 +188,6 @@ export async function deepAll(page, sel) {
     const out = [];
     const walk = (root) => {
       for (const el of root.querySelectorAll(s)) out.push((el.textContent || "").trim());
-      for (const el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot);
-    };
-    walk(document);
-    return out;
-  }, sel);
-}
-
-// Bounding boxes for `sel`, piercing shadow roots. Each entry is
-// { top, bottom, left, right, width, height, text }.
-export async function deepRects(page, sel) {
-  return await page.evaluate((s) => {
-    const out = [];
-    const walk = (root) => {
-      for (const el of root.querySelectorAll(s)) {
-        const r = el.getBoundingClientRect();
-        out.push({
-          top: r.top, bottom: r.bottom, left: r.left, right: r.right,
-          width: r.width, height: r.height, text: (el.textContent || "").trim(),
-        });
-      }
       for (const el of root.querySelectorAll("*")) if (el.shadowRoot) walk(el.shadowRoot);
     };
     walk(document);

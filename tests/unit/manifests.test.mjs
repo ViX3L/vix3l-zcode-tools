@@ -231,10 +231,13 @@ test("the documented test commands and the container's agree", () => {
       `${name} must use a quoted glob, not a bare directory: ${cmd}`
     );
   }
+  // One definition of the suite command: the image and compose both call
+  // `npm test`, whose quoted globs are asserted above. A second literal glob in
+  // either file is how the container drifts from CI without anyone noticing.
   const compose = fs.readFileSync(path.join(REPO_ROOT, "tests", "docker", "compose.yml"), "utf8");
-  assert.match(compose, /"tests\/\*\*\/\*\.test\.mjs"/, "the compose command must use the full test glob");
+  assert.match(compose, /command: \["npm", "test"\]/, "the compose command must be npm test");
   const dockerfile = fs.readFileSync(path.join(REPO_ROOT, "tests", "docker", "Dockerfile"), "utf8");
-  assert.match(dockerfile, /"tests\/\*\*\/\*\.test\.mjs"/, "the image entrypoint must use the full test glob");
+  assert.match(dockerfile, /CMD \["npm", "test"\]/, "the image entrypoint must be npm test");
 });
 
 test("the tests README documents every tier directory", () => {

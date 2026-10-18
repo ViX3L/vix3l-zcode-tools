@@ -8,19 +8,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { STATS_SIDECAR } from "./paths.mjs";
-
-// A free port, obtained by binding and releasing. Good enough for a test run;
-// the sidecar also detects EADDRINUSE and exits, so a collision fails loudly.
-export async function freePort() {
-  const { createServer } = await import("node:net");
-  return await new Promise((resolve) => {
-    const s = createServer();
-    s.listen(0, "127.0.0.1", () => {
-      const p = s.address().port;
-      s.close(() => resolve(p));
-    });
-  });
-}
+import { ephemeralPort } from "./net.mjs";
+import { childEnv } from "./env.mjs";
+import { pollUntil } from "./poll.mjs";
 
 // Every child this module starts is tracked, so a test that fails before its own
 // stop() cannot leak a process and keep the test runner's event loop alive — the
@@ -41,20 +31,11 @@ export async function startSidecar(machine, { config = { mode: "skill" }, port, 
   const runDir = path.join(machine.dir, ".zcode", "stats-composer");
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, "config.json"), JSON.stringify(config));
-  const p = port || (await freePort());
+  const p = port || (await ephemeralPort());
   const child = spawn(process.execPath, [STATS_SIDECAR], {
-    env: {
-      ...process.env,
-      HOME: machine.dir,
-      USERPROFILE: machine.dir,
-      ZCODE_USAGE_DB: machine.dbPath,
-      STATS_SIDECAR_PORT: String(p),
-      // A port collision is detected by the server itself; this only tells it
-      // the run is single-instance so it stands down cleanly.
-      STATS_SIDECAR_NO_SINGLETON: "1",
-      NODE_NO_WARNINGS: "1",
-      ...env,
-    },
+    // A port collision is detected by the server itself; this only tells it
+    // the run is single-instance so it stands down cleanly.
+    env: childEnv(machine, { STATS_SIDECAR_PORT: String(p), STATS_SIDECAR_NO_SINGLETON: "1", ...env }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   LIVE.add(child);
@@ -67,20 +48,21 @@ export async function startSidecar(machine, { config = { mode: "skill" }, port, 
   // server answering. Wait for this child to actually own the port by checking
   // it is still alive AND answering; otherwise treat an early exit as the
   // expected stand-down.
-  const deadline = Date.now() + 10_000;
-  let healthy = false;
-  while (Date.now() < deadline) {
-    if (child.exitCode != null) {
-      if (expectHealthy) throw new Error(`sidecar exited early (${child.exitCode}): ${out}`);
-      return { port: p, base, child, exitedEarly: true, log: () => out, async stop() { LIVE.delete(child); } };
-    }
+  const healthy = await pollUntil(async () => {
+    if (child.exitCode != null) return "exited";
     try {
       const r = await fetch(base + "/health", { signal: AbortSignal.timeout(500) });
-      if (r.ok) { healthy = true; break; }
-    } catch {}
-    await new Promise((r) => setTimeout(r, 50));
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }, { timeout: 10_000, label: "sidecar /health" }).catch((e) => {
+    if (expectHealthy) throw new Error(`${e.message}: ${out}`);
+    return false;
+  });
+  if (healthy === "exited") {
+    return { port: p, base, child, exitedEarly: true, log: () => out, async stop() { LIVE.delete(child); } };
   }
-  if (!healthy && expectHealthy) throw new Error(`sidecar never became healthy: ${out}`);
   const get = async (p2, opts) => {
     const r = await fetch(base + p2, { signal: AbortSignal.timeout(8000), ...opts });
     const text = await r.text();
@@ -107,12 +89,8 @@ export async function startSidecar(machine, { config = { mode: "skill" }, port, 
 // refresher on its own interval, so the first request after start may briefly
 // precede the first completed scan; this removes that race without a sleep.
 export async function waitFor(sidecar, fn, { timeout = 8000, label = "condition" } = {}) {
-  const deadline = Date.now() + timeout;
-  let last;
-  while (Date.now() < deadline) {
-    last = await sidecar.get("/stats?full=1");
-    if (fn(last.json)) return last.json;
-    await new Promise((r) => setTimeout(r, 60));
-  }
-  throw new Error(`timed out waiting for ${label}; last=${JSON.stringify(last?.json)?.slice(0, 300)}`);
+  return await pollUntil(async () => {
+    const last = await sidecar.get("/stats?full=1");
+    return fn(last.json) ? last.json : null;
+  }, { timeout, interval: 60, label });
 }
