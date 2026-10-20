@@ -1,8 +1,9 @@
 (function () {
   // VERSION is bumped when this script changes materially. The display options
   // are part of it: flipping showChips/showRanFor must supersede the running
-  // generation, not be dismissed as 'already'.
-  var VERSION = '11-__SHOW_CHIPS__-__SHOW_RANFOR__';
+  // generation, not be dismissed as 'already'. The prefix-compatibility fix
+  // changed the resolver, so it must also supersede a page still running 11.
+  var VERSION = '12-__SHOW_CHIPS__-__SHOW_RANFOR__';
   var SHOW_CHIPS = __SHOW_CHIPS__;
   var SHOW_RANFOR = __SHOW_RANFOR__;
   var EPOCH = Math.random().toString(36).slice(2, 10);

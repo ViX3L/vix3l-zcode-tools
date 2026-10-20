@@ -16,6 +16,21 @@ Entries for `0.1.0` are condensed from the project's own engineering wiki
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-10-20
+
+### Fixed
+
+- **An update now actually supersedes the page script that is still running.**
+  The injected script's `VERSION` marker is the generation identity: a newer
+  injection answers `'already'` and returns when it sees the same marker, so
+  changing the session resolver without moving the marker left the old
+  `sess_`-only code in charge. On an app that had been running 0.1.5 the chips
+  stayed blank even after 0.1.6 was installed, and not even an app restart
+  helped because the detached injector kept re-injecting the old generation
+  check. The marker moves from `11` to `12`, so the prefix fix from 0.1.6
+  replaces the stale generation on its next sweep. No configuration change is
+  required.
+
 ## [0.1.6] - 2026-10-20
 
 ### Fixed

@@ -13,7 +13,9 @@
   // leaving the old layout or side on screen until a reload.
   var LAYOUT = '__CARD_LAYOUT__';
   var POSITION = '__PILL_POSITION__';
-  var VERSION = '43-' + LAYOUT + '-' + POSITION;
+  // The prefix-compatibility fix changed the session resolver, so the marker
+  // must move too; otherwise a page still running 43 answers 'already'.
+  var VERSION = '44-' + LAYOUT + '-' + POSITION;
   var EPOCH = Math.random().toString(36).slice(2, 10);
   const SIDECAR = 'http://127.0.0.1:__SIDECAR_PORT__';
   // The sidecar port is part of the generation identity. A generation left
