@@ -97,12 +97,12 @@ async function fixtureEnv() {
   const F = await import("../lib/fixtures.mjs");
   const m = F.makeMachine("mcp");
   const db = F.createDb(m);
-  F.addSession(db, "sess_mcp_1", "MCP fixture");
-  F.addRequest(db, { sessionId: "sess_mcp_1", turnId: "turn_1", tokPerSec: 100, outputTokens: 300, genMs: 3000, ttftMs: 200 });
-  F.addTurn(db, { sessionId: "sess_mcp_1", turnId: "turn_1", userMessageId: "msg_1", totalTokens: 1234, durationMs: 4000 });
+  F.addSession(db, "session_mcp_1", "MCP fixture");
+  F.addRequest(db, { sessionId: "session_mcp_1", turnId: "turn_1", tokPerSec: 100, outputTokens: 300, genMs: 3000, ttftMs: 200 });
+  F.addTurn(db, { sessionId: "session_mcp_1", turnId: "turn_1", userMessageId: "msg_1", totalTokens: 1234, durationMs: 4000 });
   db.close();
   const stateFile = path.join(m.dir, "tps-monitor.last-session.json");
-  fs.writeFileSync(stateFile, JSON.stringify({ sessionId: "sess_mcp_1", ts: Date.now(), source: "test" }));
+  fs.writeFileSync(stateFile, JSON.stringify({ sessionId: "session_mcp_1", ts: Date.now(), source: "test" }));
   return {
     env: { HOME: m.dir, USERPROFILE: m.dir, ZCODE_USAGE_DB: m.dbPath, TPS_MONITOR_STATE_FILE: stateFile },
     machine: m,
@@ -205,10 +205,10 @@ test("request_stats returns session figures grounded in the fixture DB", async (
   const c = start(env);
   c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
   await c.next();
-  c.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "request_stats", arguments: { session_id: "sess_mcp_1" } } });
+  c.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "request_stats", arguments: { session_id: "session_mcp_1" } } });
   const msg = await c.next();
   const text = msg.result.content[0].text;
-  assert.match(text, /session: sess_mcp_1/);
+  assert.match(text, /session: session_mcp_1/);
   assert.match(text, /last:/);
   assert.match(text, /100 tok\/s/, "the fixture's rate must appear:\n" + text);
   await c.stop();
@@ -221,7 +221,7 @@ test("history_stats lists per-request samples newest last", async () => {
   const c = start(env);
   c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
   await c.next();
-  c.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "history_stats", arguments: { session_id: "sess_mcp_1", limit: 5 } } });
+  c.send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "history_stats", arguments: { session_id: "session_mcp_1", limit: 5 } } });
   const msg = await c.next();
   const text = msg.result.content[0].text;
   assert.match(text, /tok\/s/);

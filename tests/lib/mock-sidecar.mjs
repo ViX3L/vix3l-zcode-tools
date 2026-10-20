@@ -38,7 +38,7 @@ export function sampleSnapshot(over = {}) {
     ...(over.session || {}),
   };
   return {
-    sessionId: over.sessionId ?? "sess_test_0001",
+    sessionId: over.sessionId ?? "session_test_0001",
     generatedAt: new Date().toISOString(),
     last: over.last === undefined
       ? { id: "req_last", model: "deepseek-v4.1-flash:cloud", tokPerSec: 310.1, ttftMs: 420,
@@ -64,7 +64,7 @@ export function sampleSnapshot(over = {}) {
 // to that same 500.
 export function sampleSubagents(over = {}) {
   return {
-    sessionId: over.sessionId ?? "sess_test_0001",
+    sessionId: over.sessionId ?? "session_test_0001",
     // The change signature the sidecar caches on: requests : last completion :
     // running. It only moves forward, and only when real work lands.
     sig: "12:0:0",
@@ -94,7 +94,7 @@ export function sampleSubagents(over = {}) {
 
 export function sampleTurns(over = {}) {
   return {
-    sessionId: over.sessionId ?? "sess_test_0001",
+    sessionId: over.sessionId ?? "session_test_0001",
     totals: over.totals ?? { turns: 2, steps: 5, toolCalls: 7, toolErrors: 1, totalTokens: 20000 },
     turns: over.turns ?? [
       { userMessageId: "msg_1", turnId: "turn_1", totalTokens: 729123, durationMs: 43000,

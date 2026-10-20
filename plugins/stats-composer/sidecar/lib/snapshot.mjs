@@ -24,7 +24,10 @@ const REQ_SORTS = {
   status: (row) => row.status ?? "",
 };
 
-const SID_RE = /^sess_[A-Za-z0-9_-]+$/;
+// ZCode 3.16.2 uses `session_*` conversation ids; older builds and subagent
+// sessions use `sess_*`. A requested session must be one or the other, or the
+// server would re-scope to an arbitrary string from the query.
+const SID_RE = /^(?:sess_|session_)[A-Za-z0-9_-]+$/;
 
 class SnapshotStore {
   constructor({ port, pluginVersion, onPortChanged }) {

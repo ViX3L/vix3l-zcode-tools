@@ -6,8 +6,8 @@ A small plugin marketplace for **ZCode Desktop**. It ships two independently ins
 
 | Plugin | What it shows | Version |
 |---|---|---|
-| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.22 |
-| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.5 |
+| **stats-composer** — *Session Statistics (TPS/TTFT)* | Tokens per second and time-to-first-token for every model request: an inline pill in the composer toolbar, plus a local dashboard and CLI. | 0.1.23 |
+| **usage-context** — *Turn Usage Context* | Per-turn token usage and elapsed time as chips beside each assistant turn's timestamp, with hover panels for the full breakdown. | 0.1.6 |
 
 Both plugins read the usage database ZCode itself writes (`~/.zcode/cli/db/db.sqlite`), opened **read-only**. Stats therefore work identically across every provider ZCode supports — builtin templates, account plans, and custom OpenAI-compatible endpoints — because nothing is sniffed from the wire.
 
@@ -213,8 +213,8 @@ tests/
 
 Releases are cut by pushing a version tag; `.github/workflows/release.yml` runs
 the whole suite first, then publishes a GitHub Release per plugin with its source
-tree as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.22` to
-release every plugin, or `stats-composer-v0.1.22` / `usage-context-v0.1.5` for
+tree as a `.zip`, a `.tar.gz`, and a `.sha256` checksums file. Use `v0.1.23` to
+release every plugin, or `stats-composer-v0.1.23` / `usage-context-v0.1.6` for
 one. A tag's version must match the plugin's own manifest — a mismatch fails the
 run before anything is published.
 

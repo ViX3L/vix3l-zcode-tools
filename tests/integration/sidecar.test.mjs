@@ -12,7 +12,7 @@ import path from "node:path";
 import { makeMachine, createDb, addSession, addRequest, addRunningRequest, addTurn, addTool, cleanup } from "../lib/fixtures.mjs";
 import { startSidecar, waitFor, killAllSidecars } from "../lib/sidecar.mjs";
 
-const SID = "sess_sidecar_1";
+const SID = "session_sidecar_1";
 let machine;
 let sidecar;
 
@@ -151,6 +151,18 @@ test("?session= re-scopes the snapshot and is validated", async () => {
   const bad = await sidecar.get("/stats?session=../etc/passwd");
   assert.equal(bad.status, 200);
   assert.equal(bad.json.sessionId, SID);
+});
+
+test("?session= still accepts a legacy sess_ id", async () => {
+  // ZCode 3.16.2 uses `session_*` for conversations, but older builds and
+  // subagent sessions use `sess_*`. The server's validation must accept both;
+  // otherwise a pill on an older build would latch to the wrong session.
+  const legacy = await sidecar.get("/stats?session=sess_subagent_agent_test");
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.json.sessionId, "sess_subagent_agent_test");
+  // Put the shared sidecar back where the rest of the file expects it.
+  const back = await sidecar.get(`/stats?session=${SID}`);
+  assert.equal(back.json.sessionId, SID);
 });
 
 test("/requests pages the table server-side", async () => {

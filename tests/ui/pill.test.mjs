@@ -414,10 +414,23 @@ test("the pill follows the configured side without a re-install", async () => {
 
 test("the sidecar fetch is scoped to the session the app is showing", async () => {
   mock.requests.length = 0;
+  const page = await pillPage({ html: { sessionId: "session_scope_check" } });
+  await settled(page);
+  assert.ok(
+    mock.requests.some((u) => u.includes("session=session_scope_check")),
+    "the pill must ask for the visible session's stats: " + mock.requests.slice(0, 3).join(", ")
+  );
+});
+
+test("a legacy sess_ session id is still treated as a real conversation", async () => {
+  // ZCode 3.16.2 switched main conversations to `session_*`, but older builds
+  // and subagent sessions still use `sess_*`. Both must scope a fetch; only
+  // `draft` means "no data yet".
+  mock.requests.length = 0;
   const page = await pillPage({ html: { sessionId: "sess_scope_check" } });
   await settled(page);
   assert.ok(
     mock.requests.some((u) => u.includes("session=sess_scope_check")),
-    "the pill must ask for the visible session's stats: " + mock.requests.slice(0, 3).join(", ")
+    "the pill must keep working for legacy sess_ sessions: " + mock.requests.slice(0, 3).join(", ")
   );
 });

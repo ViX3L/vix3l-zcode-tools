@@ -16,6 +16,17 @@ wiki (`wiki/log.md`), which is where the pre-git history of the plugin lives.
 
 ## [Unreleased]
 
+## [0.1.23] - 2026-10-20
+
+### Fixed
+
+- **The pill works with ZCode 3.16.2's `session_*` conversation IDs.** Main
+  conversations now use the `session_` prefix, while older builds and subagent
+  sessions still use `sess_`. The page script treated the new form as a draft
+  chat, so it rendered no figures, and the sidecar rejected it as an invalid
+  session, leaving `/stats?session=…` scoped to the previous chat. Both checks
+  now accept either prefix and still reject unknown strings.
+
 ## [0.1.22] - 2026-10-18
 
 ### Changed

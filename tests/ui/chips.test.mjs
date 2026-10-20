@@ -144,11 +144,22 @@ test("a draft chat renders no chips at all", async () => {
 });
 
 test("the /turn fetch is scoped to the session the app is showing", async () => {
-  const page = await chipsPage({ html: { sessionId: "sess_chip_scope" } });
+  const page = await chipsPage({ html: { sessionId: "session_chip_scope" } });
   await settled(page);
   assert.ok(
-    mock.requests.some((u) => u.includes("/turn") && u.includes("session=sess_chip_scope")),
+    mock.requests.some((u) => u.includes("/turn") && u.includes("session=session_chip_scope")),
     "the chips must ask for the visible session's turns: " + mock.requests.slice(0, 3).join(", ")
+  );
+});
+
+test("a legacy sess_ session id still gets its chips and scoped fetch", async () => {
+  // Older ZCode builds and subagent sessions use `sess_*`; the chip script must
+  // treat those as real conversations rather than suppressing every fetch.
+  const page = await chipsPage({ html: { sessionId: "sess_chip_legacy" } });
+  await settled(page);
+  assert.ok(
+    mock.requests.some((u) => u.includes("/turn") && u.includes("session=sess_chip_legacy")),
+    "legacy sess_ sessions must still fetch their turns: " + mock.requests.slice(0, 3).join(", ")
   );
 });
 

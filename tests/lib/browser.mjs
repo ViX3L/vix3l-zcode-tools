@@ -38,7 +38,7 @@ export async function closeBrowser() {
 // `topSpace` pushes the composer down the page, which is how a test controls
 // whether there is room ABOVE the pill (there is not, when the composer sits at
 // the very top, so the card must fall below).
-export function composerHtml({ sessionId = "sess_test_0001", width = 900, topSpace = 0 } = {}) {
+export function composerHtml({ sessionId = "session_test_0001", width = 900, topSpace = 0 } = {}) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
     body { margin: 0; font-family: system-ui, sans-serif; background: #1e1e1e; color: #eee;
            --ui-font-size: 14px; }
@@ -75,7 +75,7 @@ export function composerHtml({ sessionId = "sess_test_0001", width = 900, topSpa
 //   * `topSpace` pushes the whole conversation down the page, which is how a
 //     test controls whether the hover card has room ABOVE the chip (it does
 //     not when the turns start at the very top, so the card must fall below).
-export function conversationHtml({ sessionId = "sess_test_0001", turnIds = ["msg_1"], width = 900, topSpace = 0 } = {}) {
+export function conversationHtml({ sessionId = "session_test_0001", turnIds = ["msg_1"], width = 900, topSpace = 0 } = {}) {
   const turns = turnIds
     .map(
       (id, i) => `

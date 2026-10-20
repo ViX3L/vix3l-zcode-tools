@@ -16,6 +16,16 @@ Entries for `0.1.0` are condensed from the project's own engineering wiki
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-10-20
+
+### Fixed
+
+- **The chips work with ZCode 3.16.2's `session_*` conversation IDs.** The
+  injector only recognized `sess_*`, so on a new-format conversation it
+  suppressed the `/turn` fetch and never rendered the per-turn chips. It now
+  accepts both `session_*` and the legacy `sess_*`, while `draft` still means
+  "no data yet".
+
 ## [0.1.5] - 2026-10-18
 
 ### Changed

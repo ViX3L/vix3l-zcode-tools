@@ -13,8 +13,8 @@ import { makeMachine, createDb, addSession, addRequest, cleanup } from "../lib/f
 import { startSidecar, waitFor, killAllSidecars } from "../lib/sidecar.mjs";
 import { newPageAt, closeBrowser, until } from "../lib/browser.mjs";
 
-const SID = "sess_dash_1";
-const ESID = "sess_dash_empty";
+const SID = "session_dash_1";
+const ESID = "session_dash_empty";
 let machine, sidecar, emptyMachine, emptySidecar;
 
 // Write the state file the sidecar reads to resolve a default session (it is

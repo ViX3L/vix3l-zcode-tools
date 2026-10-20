@@ -37,14 +37,14 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>app</title
   .fsp { flex: 1; }
 </style></head><body>
   <div id="root">
-    <div class="chat" data-session-id="sess_e2e_1">
+    <div class="chat" data-session-id="session_e2e_1">
       <div class="turn" data-turn-id="msg_1">
         <div class="body">reply</div>
         <div class="footer"><span class="fsp"></span><span class="ts">04:46 AM</span></div>
       </div>
     </div>
     <div class="composer-region">
-      <div class="composer" data-session-id="sess_e2e_1">
+      <div class="composer" data-session-id="session_e2e_1">
         <div class="row" data-composer-leading-content><span class="lead">access</span></div>
       </div>
     </div>

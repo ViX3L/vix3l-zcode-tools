@@ -93,11 +93,13 @@
   }
 
   // ---- find the active session + turn footers ----
+  // ZCode 3.16.2 uses `session_*` ids; older builds and subagent sessions use
+  // `sess_*`. Both are real conversations, and only `draft` means "no data yet".
   function currentSession() {
     try {
       var n = document.querySelector('[data-session-id]');
       var v = n && n.getAttribute('data-session-id');
-      if (!v || v === 'draft' || !/^sess_/.test(v)) return null;
+      if (!v || v === 'draft' || !/^(?:sess_|session_)/.test(v)) return null;
       return v;
     } catch (e) { return null; }
   }

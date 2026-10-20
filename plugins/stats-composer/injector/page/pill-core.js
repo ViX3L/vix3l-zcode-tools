@@ -127,14 +127,16 @@
   };
 
   // The session the app is CURRENTLY displaying; "draft" means a new chat that
-  // must show no figures rather than the previous chat's.
+  // must show no figures rather than the previous chat's. ZCode 3.16.2 uses
+  // `session_*` ids; older builds and subagent sessions still use `sess_*`, so
+  // both prefixes identify a real conversation.
   U.currentSession = function () {
     try {
       var n = document.querySelector('[data-session-id]');
       var v = n && n.getAttribute('data-session-id');
       if (!v) return null;
       if (v === 'draft') return { draft: true };
-      return /^sess_/.test(v) ? { sid: v } : { draft: true };
+      return /^(?:sess_|session_)/.test(v) ? { sid: v } : { draft: true };
     } catch (e) { return null; }
   };
 

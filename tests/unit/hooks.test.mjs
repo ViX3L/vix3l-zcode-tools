@@ -103,7 +103,7 @@ test("stats session-start emits valid JSON and records the session", async () =>
   writeConfig(home, { mode: "skill" }); // skill mode: no sidecar spawn
   const r = await runHook(path.join(STATS, "hooks", "session-start.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_1", hook_event_name: "SessionStart" }),
+    stdin: JSON.stringify({ session_id: "session_hook_1", hook_event_name: "SessionStart" }),
   });
   assert.equal(r.code, 0);
   // stdout must be exactly one JSON object — the app parses the whole stream.
@@ -116,7 +116,7 @@ test("stats session-start emits valid JSON and records the session", async () =>
   assert.equal(r.stderr.trim(), "", "hook wrote to stderr: " + r.stderr);
   // The state file is what every passive reader follows.
   const st = JSON.parse(fs.readFileSync(path.join(home, "tps-monitor.last-session.json"), "utf8"));
-  assert.equal(st.sessionId, "sess_hook_1");
+  assert.equal(st.sessionId, "session_hook_1");
   assert.equal(st.source, "session-start");
   assert.ok(Number.isFinite(st.ts));
 });
@@ -126,7 +126,7 @@ test("stats prompt-submit emits a JSON envelope with the stats instruction in sk
   writeConfig(home, { mode: "skill" });
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_2", hook_event_name: "UserPromptSubmit" }),
+    stdin: JSON.stringify({ session_id: "session_hook_2", hook_event_name: "UserPromptSubmit" }),
   });
   assert.equal(r.code, 0);
   assert.equal(r.stderr.trim(), "");
@@ -139,7 +139,7 @@ test("stats prompt-submit emits a JSON envelope with the stats instruction in sk
   assert.match(ctx, /--turn --current/);
   // The state file is refreshed on every prompt so the session follows the user.
   const st = JSON.parse(fs.readFileSync(path.join(home, "tps-monitor.last-session.json"), "utf8"));
-  assert.equal(st.sessionId, "sess_hook_2");
+  assert.equal(st.sessionId, "session_hook_2");
   assert.equal(st.source, "prompt-submit");
 });
 
@@ -157,7 +157,7 @@ test("stats prompt-submit keeps model context clean when a sidecar is alive but 
   fs.writeFileSync(path.join(home, ".zcode", "stats-composer", "port"), String(stub.port));
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_3" }),
+    stdin: JSON.stringify({ session_id: "session_hook_3" }),
   });
   await stub.close();
   const msg = JSON.parse(r.stdout);
@@ -176,7 +176,7 @@ test("stats prompt-submit is silent when a fresh pill attach is recorded", async
   fs.writeFileSync(path.join(runDir, "pill.json"), JSON.stringify({ attached: true, ts: Date.now(), port: 9229 }));
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_4" }),
+    stdin: JSON.stringify({ session_id: "session_hook_4" }),
   });
   await stub.close();
   const msg = JSON.parse(r.stdout);
@@ -188,7 +188,7 @@ test("stats prompt-submit honours attachStatsLine:false", async () => {
   writeConfig(home, { mode: "skill", attachStatsLine: false });
   const r = await runHook(path.join(STATS, "hooks", "prompt-submit.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_5" }),
+    stdin: JSON.stringify({ session_id: "session_hook_5" }),
   });
   const msg = JSON.parse(r.stdout);
   assert.equal(msg.hookSpecificOutput.additionalContext, "");
@@ -205,7 +205,7 @@ test("usage-context session-start says so (in the envelope) when the sidecar is 
   writeUsageConfig(home, { sidecarPort: await ephemeralPort() });
   const r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_6" }),
+    stdin: JSON.stringify({ session_id: "session_hook_6" }),
   });
   assert.equal(r.code, 0);
   assert.equal(r.stderr.trim(), "");
@@ -220,7 +220,7 @@ test("usage-context session-start reports success (empty context) when the sidec
   writeUsageConfig(home, { sidecarPort: stub.port });
   const r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
     env: baseEnv(home),
-    stdin: JSON.stringify({ session_id: "sess_hook_6b" }),
+    stdin: JSON.stringify({ session_id: "session_hook_6b" }),
   });
   assert.equal(r.code, 0);
   const msg = JSON.parse(r.stdout);
@@ -255,7 +255,7 @@ test("usage-context session-start waits for a sidecar that starts just after the
   try {
     r = await runHook(path.join(USAGE, "hooks", "session-start.mjs"), {
       env: baseEnv(home),
-      stdin: JSON.stringify({ session_id: "sess_hook_wait" }),
+      stdin: JSON.stringify({ session_id: "session_hook_wait" }),
     });
     // The reachable sidecar makes the hook spawn a real injector; reap it before
     // closing the server so it cannot attach to anything else.
